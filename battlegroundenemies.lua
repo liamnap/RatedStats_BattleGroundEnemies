@@ -3423,7 +3423,6 @@ function BGE:UpdateHealth(row, unit)
                 if okG then
                     local ng = tonumber(gv)
                     if ng == nil then
---                        BGE:UpdateHealth(row)
                     else
                         -- Some builds may return 0..1; scale if needed.
 --                        if ng <= 1.001 then print("% from guid not %") end ## this was compared and is secret so blew up
@@ -3438,7 +3437,6 @@ function BGE:UpdateHealth(row, unit)
                 local okP, v = pcall(UnitHealthPercent, readUnit, true, curve)
                 local nv = okP and tonumber(v) or nil
                     if nv == nil then
---                        BGE:UpdateHealth(unit)
                     else
                     -- If curve wasn't available, API may return 0..1; scale it.
 --                    if nv <= 1.001 then print("% from health percent not %") end ## this was compared and is secret so blew up
@@ -3489,7 +3487,6 @@ function BGE:UpdateHealth(row, unit)
             -- If txt is unusable, SetText will fail and we keep the old value.
             pcall(row.hpText.SetText, row.hpText, txt)
         else
---            BGE:UpdateHealth(row)
         end
     end
     -- Throttle clip updates (geometry calls are expensive)
