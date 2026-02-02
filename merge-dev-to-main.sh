@@ -200,20 +200,20 @@ done
 
 # Stamp the release version into the root TOC and stage it (even if dev didn't touch it).
 # This makes in-game version comparisons possible (Details/BGE-style peer compare).
-if [[ -f "RatedStats.toc" ]]; then
-  if grep -qE '^##[[:space:]]*Version:' "RatedStats.toc"; then
+if [[ -f "RatedStats_BattleGroundEnemies.toc" ]]; then
+  if grep -qE '^##[[:space:]]*Version:' "RatedStats_BattleGroundEnemies.toc"; then
     if command -v perl >/dev/null 2>&1; then
-      perl -pi -e "s/^##\\s*Version:\\s*.*\$/## Version: ${tag}/m" "RatedStats.toc"
+      perl -pi -e "s/^##\\s*Version:\\s*.*\$/## Version: ${tag}/m" "RatedStats_BattleGroundEnemies.toc"
     else
-      sed -i "s/^##[[:space:]]*Version:.*$/## Version: ${tag}/" "RatedStats.toc"
+      sed -i "s/^##[[:space:]]*Version:.*$/## Version: ${tag}/" "RatedStats_BattleGroundEnemies.toc"
     fi
   else
     # If Version line is missing, insert it at the top.
-    { echo "## Version: ${tag}"; cat "RatedStats.toc"; } > "RatedStats.toc.tmp" && mv "RatedStats.toc.tmp" "RatedStats.toc"
+    { echo "## Version: ${tag}"; cat "RatedStats_BattleGroundEnemies.toc"; } > "RatedStats_BattleGroundEnemies.toc.tmp" && mv "RatedStats_BattleGroundEnemies.toc.tmp" "RatedStats_BattleGroundEnemies.toc"
   fi
-  git add -- "RatedStats.toc"
+  git add -- "RatedStats_BattleGroundEnemies.toc"
 else
-  echo "WARN: RatedStats.toc not found; skipping TOC version stamp."
+  echo "WARN: RatedStats_BattleGroundEnemies.toc not found; skipping TOC version stamp."
 fi
 
 if git diff --cached --quiet; then
