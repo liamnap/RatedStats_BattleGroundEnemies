@@ -98,6 +98,7 @@ local SafeStatusBarValues
 local NormalizeFactionIndex
 local UnitStillMatchesRow
 local ClearUnitCollision
+local CreateMainFrame
 
 -- Debug (throttled)
 BGE._dbgLast = {}
@@ -4354,6 +4355,16 @@ end
 function BGE:ApplySettings()
     if not self.frame then return end
 
+    -- If preview gets enabled AFTER login (outside PvP), the frame won't exist yet.
+    -- Bootstrap it here so Settings -> Preview immediately shows the frame.
+    if not self.frame then
+        local preview = GetSetting("bgePreview", false)
+        if (IsInPVPInstance() or preview) and CreateMainFrame then
+            CreateMainFrame()
+        end
+        return
+    end
+
     -- Achievements icon visibility: when toggled (or when the Achievements API becomes available),
     -- clear cached icon data so rows re-evaluate and redraw immediately.
     local showAch = GetSetting("bgeShowAchievIcon", false)
@@ -4401,7 +4412,7 @@ function BGE:ApplySettings()
     self:UpdateRowVisibilities()
 end
 
-local function CreateMainFrame()
+CreateMainFrame = function()
     local f = CreateFrame("Frame", "RatedStats_BGE_Frame", UIParent)
     BGE.frame = f
 
