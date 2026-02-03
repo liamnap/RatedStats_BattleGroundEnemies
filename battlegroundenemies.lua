@@ -5,6 +5,30 @@ RSTATS = RSTATS or _G.RSTATS
 local BGE = {}
 _G.RSTATS_BGE = BGE
 
+local function IsInPVPInstance()
+    -- BG-only: battlegrounds are instanceType "pvp".
+    -- Arenas (including Solo Shuffle) are instanceType "arena" and must return false.
+    if _G.IsInInstance then
+        local ok, inInstance, instanceType = pcall(_G.IsInInstance)
+        if ok and inInstance then
+            if instanceType == "pvp" then
+                return true
+            end
+            if instanceType == "arena" then
+                return false
+            end
+        end
+    end
+    -- Fallback for older/odd clients
+    if C_PvP and C_PvP.IsPVPMap then
+        local ok, v = pcall(C_PvP.IsPVPMap)
+        return ok and v or false
+    end
+    return false
+end
+
+if not IsInPVPInstance then return end
+
 BGE.rows = {}
 BGE.previewRows = {}
 BGE.maxPlates = 40
@@ -1321,28 +1345,6 @@ local function ResolvePreviewProfilePrefix(db)
     if s.bge15Preview then return "bge15" end
     if s.bgeLargePreview then return "bgeLarge" end
     return "bgeRated"
-end
-
-local function IsInPVPInstance()
-    -- BG-only: battlegrounds are instanceType "pvp".
-    -- Arenas (including Solo Shuffle) are instanceType "arena" and must return false.
-    if _G.IsInInstance then
-        local ok, inInstance, instanceType = pcall(_G.IsInInstance)
-        if ok and inInstance then
-            if instanceType == "pvp" then
-                return true
-            end
-            if instanceType == "arena" then
-                return false
-            end
-        end
-    end
-    -- Fallback for older/odd clients
-    if C_PvP and C_PvP.IsPVPMap then
-        local ok, v = pcall(C_PvP.IsPVPMap)
-        return ok and v or false
-    end
-    return false
 end
 
 GetSetting = function(key, default)
