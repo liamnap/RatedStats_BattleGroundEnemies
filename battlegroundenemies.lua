@@ -27,8 +27,6 @@ local function IsInPVPInstance()
     return false
 end
 
-if not IsInPVPInstance() then return end
-
 BGE.rows = {}
 BGE.previewRows = {}
 BGE.maxPlates = 40
