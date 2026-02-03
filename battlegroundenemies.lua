@@ -1360,12 +1360,10 @@ GetSetting = function(key, default)
 
         local prefix = BGE._profilePrefix
         if not IsInPVPInstance() then
-            -- Preview profile can change while you're in PvE (via Settings). Don't cache forever.
-            local wantPrefix = ResolvePreviewProfilePrefix(db)
-            if prefix ~= wantPrefix then
-                prefix = wantPrefix
-                BGE._profilePrefix = wantPrefix
-            end
+            -- Preview profile can change while you're in PvE (via Settings).
+            -- Always re-resolve; do not rely on a cached prefix being "good enough".
+            prefix = ResolvePreviewProfilePrefix(db)
+            BGE._profilePrefix = prefix
         end
 
         if prefix then
