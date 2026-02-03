@@ -27,7 +27,7 @@ local function IsInPVPInstance()
     return false
 end
 
-if not IsInPVPInstance then return end
+if not IsInPVPInstance() then return end
 
 BGE.rows = {}
 BGE.previewRows = {}
