@@ -4628,7 +4628,7 @@ evt:SetScript("OnEvent", function(_, event, arg1)
     if event == "PLAYER_ENTERING_WORLD" or event == "ZONE_CHANGED_NEW_AREA" then
         -- IMPORTANT: entering/leaving BGs needs anchors/layout as well as visibility.
         BGE:UpdateMatchState()
---        BGE:ApplySettings()
+        BGE:ApplySettings()
         return
     end
 
