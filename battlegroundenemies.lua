@@ -4180,6 +4180,18 @@ function BGE:RefreshVisibility()
         -- Relying on GetNumBattlefieldScores() early/late-join can be too low (e.g. 10 in a 15v15),
         -- which prevents rows 11..15 from ever existing.
         local want = 10
+        local rated = false
+
+        if (not preview) and IsInPVPInstance() and self._mode ~= "arena" then
+            if C_PvP and C_PvP.IsRatedBattleground then
+                local okR, r = pcall(C_PvP.IsRatedBattleground)
+                if okR and r then rated = true end
+            elseif _G.IsRatedBattleground then
+                local okR, r = pcall(_G.IsRatedBattleground)
+                if okR and r then rated = true end
+            end
+        end
+
         if preview then
             want = GetSetting("bgePreviewCount", 8)
         elseif self._mode == "arena" then
@@ -4192,15 +4204,6 @@ function BGE:RefreshVisibility()
             --   if bg maxPlayers == 15: 15   (AB/EotS/DWG are 15s; this also survives locale)
             --   else: 10
             --   else: 15 (create enough rows for 15v15; unused rows stay hidden in 10v10)
-
-            local rated = false
-            if C_PvP and C_PvP.IsRatedBattleground then
-                local okR, r = pcall(C_PvP.IsRatedBattleground)
-                if okR and r then rated = true end
-            elseif _G.IsRatedBattleground then
-                local okR, r = pcall(_G.IsRatedBattleground)
-                if okR and r then rated = true end
-            end
 
             if rated then
                 want = 8
@@ -4225,15 +4228,21 @@ function BGE:RefreshVisibility()
                     end
                 end
 
-                if maxPlayers and maxPlayers > 15 then
+                -- Known 15v15 maps (locale-safe via mapID):
+                -- Arathi Basin=1366, Eye of the Storm=112, Deepwind Gorge=968
+                if mapID == 1366 or mapID == 112 or mapID == 968 then
+                    want = 15
+                elseif maxPlayers and maxPlayers > 15 then
                     want = 40
                 elseif maxPlayers and maxPlayers == 15 then
                     want = 15
+                elseif maxPlayers and maxPlayers == 10 then
+                    want = 10
                 else
                     -- If we can't confidently resolve maxPlayers yet (mapID timing / API quirks),
-                    -- default to 15 so 15v15 maps can still show rows 11..15.
-                    -- In 10v10, the extra rows remain hidden because they never get identity.
-                    want = 15
+                    -- default to 10 for normal BGs.
+                    -- 15v15 maps are handled above via explicit mapIDs so we don't regress back to "stops at 10".
+                    want = 10
                 end
             end
         end
