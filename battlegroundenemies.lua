@@ -4413,6 +4413,23 @@ function BGE:ApplySettings()
         SetSetting("bgeY", y)
     end)
 
+    -- Allow dragging by the chat-style anchor tab as well (rows/buttons can steal mouse input).
+    if self.frame.anchorTab then
+        self.frame.anchorTab:RegisterForDrag("LeftButton")
+        self.frame.anchorTab:SetScript("OnDragStart", function()
+            if GetSetting("bgeLocked", true) then return end
+            self.frame:StartMoving()
+        end)
+        self.frame.anchorTab:SetScript("OnDragStop", function()
+            self.frame:StopMovingOrSizing()
+            local p, _, rp, x, y = self.frame:GetPoint(1)
+            SetSetting("bgePoint", p)
+            SetSetting("bgeRelPoint", rp)
+            SetSetting("bgeX", x)
+            SetSetting("bgeY", y)
+        end)
+    end
+
     self:ApplyMode()
     self:RefreshVisibility()
     self:UpdateFrameTeamTint()
