@@ -5,6 +5,28 @@ RSTATS = RSTATS or _G.RSTATS
 local BGE = {}
 _G.RSTATS_BGE = BGE
 
+local function IsInPVPInstance()
+    -- BG-only: battlegrounds are instanceType "pvp".
+    -- Arenas (including Solo Shuffle) are instanceType "arena" and must return false.
+    if _G.IsInInstance then
+        local ok, inInstance, instanceType = pcall(_G.IsInInstance)
+        if ok and inInstance then
+            if instanceType == "pvp" then
+                return true
+            end
+            if instanceType == "arena" then
+                return false
+            end
+        end
+    end
+    -- Fallback for older/odd clients
+    if C_PvP and C_PvP.IsPVPMap then
+        local ok, v = pcall(C_PvP.IsPVPMap)
+        return ok and v or false
+    end
+    return false
+end
+
 BGE.rows = {}
 BGE.previewRows = {}
 BGE.maxPlates = 40
@@ -76,6 +98,7 @@ local SafeStatusBarValues
 local NormalizeFactionIndex
 local UnitStillMatchesRow
 local ClearUnitCollision
+local CreateMainFrame
 
 -- Debug (throttled)
 BGE._dbgLast = {}
@@ -1323,28 +1346,6 @@ local function ResolvePreviewProfilePrefix(db)
     return "bgeRated"
 end
 
-local function IsInPVPInstance()
-    -- BG-only: battlegrounds are instanceType "pvp".
-    -- Arenas (including Solo Shuffle) are instanceType "arena" and must return false.
-    if _G.IsInInstance then
-        local ok, inInstance, instanceType = pcall(_G.IsInInstance)
-        if ok and inInstance then
-            if instanceType == "pvp" then
-                return true
-            end
-            if instanceType == "arena" then
-                return false
-            end
-        end
-    end
-    -- Fallback for older/odd clients
-    if C_PvP and C_PvP.IsPVPMap then
-        local ok, v = pcall(C_PvP.IsPVPMap)
-        return ok and v or false
-    end
-    return false
-end
-
 GetSetting = function(key, default)
     local db = GetPlayerDB()
     if not db then return default end
@@ -1358,7 +1359,9 @@ GetSetting = function(key, default)
         end
 
         local prefix = BGE._profilePrefix
-        if not prefix and not IsInPVPInstance() then
+        if not IsInPVPInstance() then
+            -- Preview profile can change while you're in PvE (via Settings).
+            -- Always re-resolve; do not rely on a cached prefix being "good enough".
             prefix = ResolvePreviewProfilePrefix(db)
             BGE._profilePrefix = prefix
         end
@@ -3423,7 +3426,6 @@ function BGE:UpdateHealth(row, unit)
                 if okG then
                     local ng = tonumber(gv)
                     if ng == nil then
---                        BGE:UpdateHealth(row)
                     else
                         -- Some builds may return 0..1; scale if needed.
 --                        if ng <= 1.001 then print("% from guid not %") end ## this was compared and is secret so blew up
@@ -3438,7 +3440,6 @@ function BGE:UpdateHealth(row, unit)
                 local okP, v = pcall(UnitHealthPercent, readUnit, true, curve)
                 local nv = okP and tonumber(v) or nil
                     if nv == nil then
---                        BGE:UpdateHealth(unit)
                     else
                     -- If curve wasn't available, API may return 0..1; scale it.
 --                    if nv <= 1.001 then print("% from health percent not %") end ## this was compared and is secret so blew up
@@ -3489,7 +3490,6 @@ function BGE:UpdateHealth(row, unit)
             -- If txt is unusable, SetText will fail and we keep the old value.
             pcall(row.hpText.SetText, row.hpText, txt)
         else
---            BGE:UpdateHealth(row)
         end
     end
     -- Throttle clip updates (geometry calls are expensive)
@@ -4180,6 +4180,18 @@ function BGE:RefreshVisibility()
         -- Relying on GetNumBattlefieldScores() early/late-join can be too low (e.g. 10 in a 15v15),
         -- which prevents rows 11..15 from ever existing.
         local want = 10
+        local rated = false
+
+        if (not preview) and IsInPVPInstance() and self._mode ~= "arena" then
+            if C_PvP and C_PvP.IsRatedBattleground then
+                local okR, r = pcall(C_PvP.IsRatedBattleground)
+                if okR and r then rated = true end
+            elseif _G.IsRatedBattleground then
+                local okR, r = pcall(_G.IsRatedBattleground)
+                if okR and r then rated = true end
+            end
+        end
+
         if preview then
             want = GetSetting("bgePreviewCount", 8)
         elseif self._mode == "arena" then
@@ -4192,15 +4204,6 @@ function BGE:RefreshVisibility()
             --   if bg maxPlayers == 15: 15   (AB/EotS/DWG are 15s; this also survives locale)
             --   else: 10
             --   else: 15 (create enough rows for 15v15; unused rows stay hidden in 10v10)
-
-            local rated = false
-            if C_PvP and C_PvP.IsRatedBattleground then
-                local okR, r = pcall(C_PvP.IsRatedBattleground)
-                if okR and r then rated = true end
-            elseif _G.IsRatedBattleground then
-                local okR, r = pcall(_G.IsRatedBattleground)
-                if okR and r then rated = true end
-            end
 
             if rated then
                 want = 8
@@ -4225,15 +4228,21 @@ function BGE:RefreshVisibility()
                     end
                 end
 
-                if maxPlayers and maxPlayers > 15 then
+                -- Known 15v15 maps (locale-safe via mapID):
+                -- Arathi Basin=1366, Eye of the Storm=112, Deepwind Gorge=968
+                if mapID == 1366 or mapID == 112 or mapID == 968 then
+                    want = 15
+                elseif maxPlayers and maxPlayers > 15 then
                     want = 40
                 elseif maxPlayers and maxPlayers == 15 then
                     want = 15
+                elseif maxPlayers and maxPlayers == 10 then
+                    want = 10
                 else
                     -- If we can't confidently resolve maxPlayers yet (mapID timing / API quirks),
-                    -- default to 15 so 15v15 maps can still show rows 11..15.
-                    -- In 10v10, the extra rows remain hidden because they never get identity.
-                    want = 15
+                    -- default to 10 for normal BGs.
+                    -- 15v15 maps are handled above via explicit mapIDs so we don't regress back to "stops at 10".
+                    want = 10
                 end
             end
         end
@@ -4355,7 +4364,23 @@ function BGE:HandleArenaUnit(unit)
 end
 
 function BGE:ApplySettings()
-    if not self.frame then return end
+    if not self.frame then
+        -- Outside PvP, Settings can enable preview after login. Bootstrap the frame here.
+        if (IsInPVPInstance() or GetSetting("bgePreview", false)) and CreateMainFrame then
+            CreateMainFrame()
+        end
+        return
+    end
+
+    -- If preview gets enabled AFTER login (outside PvP), the frame won't exist yet.
+    -- Bootstrap it here so Settings -> Preview immediately shows the frame.
+    if not self.frame then
+        local preview = GetSetting("bgePreview", false)
+        if (IsInPVPInstance() or preview) and CreateMainFrame then
+            CreateMainFrame()
+        end
+        return
+    end
 
     -- Achievements icon visibility: when toggled (or when the Achievements API becomes available),
     -- clear cached icon data so rows re-evaluate and redraw immediately.
@@ -4397,6 +4422,23 @@ function BGE:ApplySettings()
         SetSetting("bgeY", y)
     end)
 
+    -- Allow dragging by the chat-style anchor tab as well (rows/buttons can steal mouse input).
+    if self.frame.anchorTab then
+        self.frame.anchorTab:RegisterForDrag("LeftButton")
+        self.frame.anchorTab:SetScript("OnDragStart", function()
+            if GetSetting("bgeLocked", true) then return end
+            self.frame:StartMoving()
+        end)
+        self.frame.anchorTab:SetScript("OnDragStop", function()
+            self.frame:StopMovingOrSizing()
+            local p, _, rp, x, y = self.frame:GetPoint(1)
+            SetSetting("bgePoint", p)
+            SetSetting("bgeRelPoint", rp)
+            SetSetting("bgeX", x)
+            SetSetting("bgeY", y)
+        end)
+    end
+
     self:ApplyMode()
     self:RefreshVisibility()
     self:UpdateFrameTeamTint()
@@ -4404,7 +4446,7 @@ function BGE:ApplySettings()
     self:UpdateRowVisibilities()
 end
 
-local function CreateMainFrame()
+CreateMainFrame = function()
     local f = CreateFrame("Frame", "RatedStats_BGE_Frame", UIParent)
     BGE.frame = f
 
@@ -4540,8 +4582,25 @@ evt:RegisterEvent("PVP_MATCH_COMPLETE")
 
 evt:SetScript("OnEvent", function(_, event, arg1)
     if event == "PLAYER_LOGIN" then
+        -- Only bootstrap BGE outside PvP if preview is enabled.
+        -- This keeps BGE truly "BG-only" and avoids any chance of taint bleed in PvE.
+        local preview = GetSetting("bgePreview", false)
+        if not preview and not IsInPVPInstance() then
+            return
+        end
         CreateMainFrame()
         BGE:ApplySettings()
+        return
+    end
+
+    -- Hard stop: outside PvP, ignore all events unless preview is enabled.
+    -- We still allow zone transitions so settings/visibility can remain correct.
+    local preview = GetSetting("bgePreview", false)
+    if not preview and not IsInPVPInstance() then
+        if event == "PLAYER_ENTERING_WORLD" or event == "ZONE_CHANGED_NEW_AREA" then
+            BGE:UpdateMatchState()
+            BGE:ApplySettings()
+        end
         return
     end
 
