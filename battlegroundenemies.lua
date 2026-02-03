@@ -1359,9 +1359,13 @@ GetSetting = function(key, default)
         end
 
         local prefix = BGE._profilePrefix
-        if not prefix and not IsInPVPInstance() then
-            prefix = ResolvePreviewProfilePrefix(db)
-            BGE._profilePrefix = prefix
+        if not IsInPVPInstance() then
+            -- Preview profile can change while you're in PvE (via Settings). Don't cache forever.
+            local wantPrefix = ResolvePreviewProfilePrefix(db)
+            if prefix ~= wantPrefix then
+                prefix = wantPrefix
+                BGE._profilePrefix = wantPrefix
+            end
         end
 
         if prefix then
@@ -4353,7 +4357,13 @@ function BGE:HandleArenaUnit(unit)
 end
 
 function BGE:ApplySettings()
-    if not self.frame then return end
+    if not self.frame then
+        -- Outside PvP, Settings can enable preview after login. Bootstrap the frame here.
+        if (IsInPVPInstance() or GetSetting("bgePreview", false)) and CreateMainFrame then
+            CreateMainFrame()
+        end
+        return
+    end
 
     -- If preview gets enabled AFTER login (outside PvP), the frame won't exist yet.
     -- Bootstrap it here so Settings -> Preview immediately shows the frame.
