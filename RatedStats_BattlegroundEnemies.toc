@@ -1,7 +1,7 @@
 ## Title: Rated Stats - Battleground Enemies
 ## Notes: Enemy list frames from nameplates (BG/RBGB). Requires RatedStats.
 ## Author: liamnap
-## Version: TWW S3
+## Version: v1.1
 ## Interface: 120000
 ## DefaultState: enabled
 

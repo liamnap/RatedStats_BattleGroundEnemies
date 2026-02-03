@@ -2266,30 +2266,30 @@ function BGE:SeedRowsFromScoreboard()
                 if okM then mapID = mid end
             end
 
-            -- AB=1366, EotS=112, DWG=968
-            if mapID == 1366 or mapID == 112 or mapID == 968 then
-                expected = 15
-            else
-                local maxPlayers = nil
-                if mapID and C_PvP and C_PvP.GetNumBattlegroundTypes and C_PvP.GetBattlegroundInfo then
-                    local okN, tN = pcall(C_PvP.GetNumBattlegroundTypes)
-                    if okN and type(tN) == "number" then
-                        for idx = 1, tN do
-                            local okI, bi = pcall(C_PvP.GetBattlegroundInfo, idx)
-                            if okI and bi and bi.mapID == mapID and type(bi.maxPlayers) == "number" then
-                                maxPlayers = bi.maxPlayers
-                                break
-                            end
+            local maxPlayers = nil
+            -- Prefer resolved maxPlayers first.
+            if mapID and C_PvP and C_PvP.GetNumBattlegroundTypes and C_PvP.GetBattlegroundInfo then
+                local okN, tN = pcall(C_PvP.GetNumBattlegroundTypes)
+                if okN and type(tN) == "number" then
+                    for idx = 1, tN do
+                        local okI, bi = pcall(C_PvP.GetBattlegroundInfo, idx)
+                        if okI and bi and bi.mapID == mapID and type(bi.maxPlayers) == "number" then
+                            maxPlayers = bi.maxPlayers
+                            break
                         end
                     end
                 end
-                if maxPlayers and maxPlayers > 15 then
-                    expected = 40
-                elseif maxPlayers and maxPlayers == 15 then
-                    expected = 15
-                elseif maxPlayers and maxPlayers == 10 then
-                    expected = 10
-                end
+            end
+
+            if maxPlayers and maxPlayers > 15 then
+                expected = 40
+            elseif maxPlayers and maxPlayers == 15 then
+                expected = 15
+            elseif maxPlayers and maxPlayers == 10 then
+                expected = 10
+            -- Fallback only if maxPlayers not resolved:
+            elseif mapID == 1366 or mapID == 112 or mapID == 968 then
+                expected = 15
             end
 
             -- Fallback: infer from scoreboard total once it has populated.
@@ -2673,6 +2673,7 @@ end
 -- Short BG-entry warmup: scoreboard often starts at 0 until it gets a push.
 function BGE:StartScoreWarmup()
     if self._scoreWarmupTicker then return end
+    self._scoreWarmupStartedAt = GetTime()
     -- Long-lived keepalive: BGs can be joined late and score data can lag.
     -- Keep it LOW frequency to avoid combat hitching.
     self._scoreWarmupTicker = C_Timer.NewTicker(5, function()
@@ -2688,6 +2689,17 @@ function BGE:StartScoreWarmup()
         if want < 1 then want = 1 end
         if want > (self.maxPlates or 40) then want = (self.maxPlates or 40) end
         local rosterN = (self.roster and #self.roster) or 0
+        local expected = self._expectedBGTeamSize or self._expectedBGTeamSizeGuess
+        local startedAt = self._scoreWarmupStartedAt or GetTime()
+        local age = GetTime() - startedAt
+
+        -- Stop once resolved; do not require roster to reach "want" (settings can exceed actual team size).
+        if self._matchStarted and self._seededThisBG and (not self:HasUnresolvedSeededRows()) then
+            if (expected and rosterN >= expected) or (age >= 90) then
+                self:StopScoreWarmup()
+                return
+            end
+        end
 
         if self._matchStarted and self._seededThisBG and (not self:HasUnresolvedSeededRows()) and rosterN >= want then
             self:StopScoreWarmup()
@@ -2712,6 +2724,7 @@ function BGE:StopScoreWarmup()
         self._scoreWarmupTicker:Cancel()
         self._scoreWarmupTicker = nil
     end
+    self._scoreWarmupStartedAt = nil
 end
 
 function BGE:UpdateRoleIcon(row)
@@ -3628,6 +3641,19 @@ function BGE:ScanTargets()
         n = n + 1; units[n] = "softenemy"
     end
 
+    -- In long fights, this function can become steady overhead.
+    -- Throttle in combat to reduce CPU while keeping updates flowing.
+    do
+        local now = GetTime()
+        if UnitAffectingCombat and UnitAffectingCombat("player") then
+            local last = self._lastScanTargetsAt or 0
+            if (now - last) < 1.0 then
+                return
+            end
+        end
+        self._lastScanTargetsAt = now
+    end
+
     -- Ally targets (raidNtarget / partyNtarget)
     -- Staggered: scanning every raid member every 0.5s is unnecessary and causes hitching in big fights.
     -- We cycle through the group over multiple ticks instead.
@@ -3679,7 +3705,12 @@ function BGE:ScanTargets()
     -- Critical: visibility/alpha is decided in UpdateRowVisibilities().
     -- Without this, rows can stay permanently faded even while alt units are updating.
     if anyHit then
-        self:UpdateRowVisibilities()
+        local now = GetTime()
+        local lastV = self._lastVisFromScanAt or 0
+        if (now - lastV) >= 1.5 then
+            self._lastVisFromScanAt = now
+            self:UpdateRowVisibilities()
+        end
     end
 end
 
@@ -3769,12 +3800,27 @@ function BGE:HandlePlateAdded(unit)
         local okH, honor = pcall(UnitHonorLevel, unit)
         honor = (okH and type(honor) == "number") and honor or 0
         if honor == 0 and C_Timer and C_Timer.After then
-            local u = unit
-            C_Timer.After(5, function()
-                if UnitExists(u) then
-                    BGE:HandlePlateAdded(u)
-                end
-            end)
+            -- honor can remain 0 indefinitely on hostile units; never allow unbounded retries.
+            self._honorZeroRetry = self._honorZeroRetry or {}
+            self._honorZeroPending = self._honorZeroPending or {}
+
+            local c = self._honorZeroRetry[unit] or 0
+            if c >= 2 then
+                self._honorZeroRetry[unit] = nil
+                self._honorZeroPending[unit] = nil
+            elseif not self._honorZeroPending[unit] then
+                self._honorZeroRetry[unit] = c + 1
+                self._honorZeroPending[unit] = true
+                local u = unit
+                C_Timer.After(5, function()
+                    local b = _G.RSTATS_BGE
+                    if not b then return end
+                    b._honorZeroPending[u] = nil
+                    if UnitExists(u) then
+                        b:HandlePlateAdded(u)
+                    end
+                end)
+            end
         else
             -- Seeded rows are built from scoreboard data which has no level/sex in 12.x,
             -- so PID matching against seeded rows MUST be seed-compatible (level=0, sex=0).
@@ -3880,22 +3926,40 @@ function BGE:HandlePlateAdded(unit)
                 if self._plateAddRetry then
                     self._plateAddRetry[unit] = 0
                 end
+                if self._plateAddRetryPending then
+                    self._plateAddRetryPending[unit] = nil
+                end
             end
         end
 
         -- But: nameplate text often appears later and PID isn't unique. Retry a few times.
         if C_Timer and C_Timer.After then
-            local c = (self._plateAddRetry and self._plateAddRetry[unit]) or 0
-            if c < 60 then
-                self._plateAddRetry[unit] = c + 1
-                local u = unit
-                C_Timer.After(2, function()
-                    if UnitExists(u) then
-                        BGE:HandlePlateAdded(u)
-                    end
-                end)
-            else
+            self._plateAddRetry = self._plateAddRetry or {}
+            self._plateAddRetryPending = self._plateAddRetryPending or {}
+
+            local c = self._plateAddRetry[unit] or 0
+            if c >= 60 then
                 self._plateAddRetry[unit] = nil
+                self._plateAddRetryPending[unit] = nil
+            elseif not self._plateAddRetryPending[unit] then
+                self._plateAddRetry[unit] = c + 1
+                self._plateAddRetryPending[unit] = true
+
+                local u = unit
+                local expectedKey = self._plateAddRetryKey and self._plateAddRetryKey[unit] or nil
+                C_Timer.After(2, function()
+                    local b = _G.RSTATS_BGE
+                    if not b then return end
+                    b._plateAddRetryPending[u] = nil
+                    if not UnitExists(u) then return end
+
+                    -- If token recycled, do not keep retrying the wrong occupant.
+                    local curKey = b._plateAddRetryKey and b._plateAddRetryKey[u] or nil
+                    if expectedKey ~= nil and curKey ~= expectedKey then
+                        return
+                    end
+                    b:HandlePlateAdded(u)
+                end)
             end
         end
         return
@@ -3977,12 +4041,18 @@ function BGE:HandlePlateRemoved(unit)
     local row = self.rowByUnit and self.rowByUnit[unit] or nil
     if not row then return end
 
-    if self._plateAddRetry then
-        self._plateAddRetry[unit] = nil
-    end
+    if self._plateAddRetry then self._plateAddRetry[unit] = nil end
+    if self._plateAddRetryPending then self._plateAddRetryPending[unit] = nil end
 
     if self._plateAddRetryKey then
         self._plateAddRetryKey[unit] = nil
+    end
+
+    if self._honorZeroRetry then
+        self._honorZeroRetry[unit] = nil
+    end
+    if self._honorZeroPending then
+        self._honorZeroPending[unit] = nil
     end
 
     -- Do NOT wipe. Keep last known identity/bars and just fade until it returns.
@@ -4228,11 +4298,8 @@ function BGE:RefreshVisibility()
                     end
                 end
 
-                -- Known 15v15 maps (locale-safe via mapID):
-                -- Arathi Basin=1366, Eye of the Storm=112, Deepwind Gorge=968
-                if mapID == 1366 or mapID == 112 or mapID == 968 then
-                    want = 15
-                elseif maxPlayers and maxPlayers > 15 then
+                -- Prefer resolved maxPlayers (handles 10v10 variants on "15v15 maps").
+                if maxPlayers and maxPlayers > 15 then
                     want = 40
                 elseif maxPlayers and maxPlayers == 15 then
                     want = 15
