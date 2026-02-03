@@ -4537,8 +4537,25 @@ evt:RegisterEvent("PVP_MATCH_COMPLETE")
 
 evt:SetScript("OnEvent", function(_, event, arg1)
     if event == "PLAYER_LOGIN" then
+        -- Only bootstrap BGE outside PvP if preview is enabled.
+        -- This keeps BGE truly "BG-only" and avoids any chance of taint bleed in PvE.
+        local preview = GetSetting("bgePreview", false)
+        if not preview and not IsInPVPInstance() then
+            return
+        end
         CreateMainFrame()
         BGE:ApplySettings()
+        return
+    end
+
+    -- Hard stop: outside PvP, ignore all events unless preview is enabled.
+    -- We still allow zone transitions so settings/visibility can remain correct.
+    local preview = GetSetting("bgePreview", false)
+    if not preview and not IsInPVPInstance() then
+        if event == "PLAYER_ENTERING_WORLD" or event == "ZONE_CHANGED_NEW_AREA" then
+            BGE:UpdateMatchState()
+            BGE:ApplySettings()
+        end
         return
     end
 
