@@ -1,85 +1,95 @@
 # Rated Stats — Battleground Enemies (BGE)
 
-A Retail **battleground-only** enemy frames addon built for the Rated Stats ecosystem.
+Rated Stats — Battleground Enemies is a **Retail, battleground-only** enemy frames addon built for the Rated Stats ecosystem.
 
-This addon gives you a compact, configurable enemy list in battlegrounds (including Rated BG / Blitz), designed to stay readable in real fights and to behave predictably with modern Blizzard UI restrictions.
+It gives you a compact, configurable enemy roster for BGs (including Rated BG / Blitz): readable rows, predictable layout behavior, and PvP-first visuals that respect modern Blizzard UI restrictions.
 
-Repo contents are intentionally simple: a `.toc` and a single Lua file (`battlegroundenemies.lua`), plus release/merge helper scripts.  
-- `RatedStats_BattlegroundEnemies.toc`  
-- `battlegroundenemies.lua`  
-- `save-and-tag.js` / `merge-dev-to-main.sh`
+Download (recommended): https://www.curseforge.com/wow/addons/battlegroundenemies-rated-stats-version  
+Source (GitHub): https://github.com/liamnap/RatedStats_BattleGroundEnemies
 
----
+* * *
 
 ## What it does
 
-### Enemy frames that actually help in BGs
-- Shows an enemy roster in a frame (rows / columns based on your settings).
-- Per-row health display and dynamic updates when the game allows (scoreboard seeding + live unit bindings where available).
-- Click-to-target support (where permitted by secure UI rules).
+### Enemy roster frames (Battlegrounds)
+- Displays the enemy team as a compact list (rows / columns based on your settings).
+- Rows can show **live health** and update when unit data is available (scoreboard seeding + live unit bindings where possible).
+- Click-to-target support **where permitted** by secure UI rules.
 
-### “Chat-tab” style header + quick actions
+### “Chat-tab” header + quick actions
 - A top-left tab (like Blizzard chat windows) that appears on hover.
-- Right-click menu actions for:
+- Right-click menu actions:
   - Lock / Unlock frame position
-  - Open settings
+  - Settings
 
-### Visual clarity tuned for PvP
-- Transparent background tinting by enemy faction color (stronger red/blue tint while keeping transparency).
-- Out-of-range styling that doesn’t fight your eyes mid-fight.
+### PvP-first visuals
+- Transparent background tint based on **enemy faction** (Blue for Alliance, Red for Horde) while keeping the frame readable.
+- Out-of-range visuals that reduce clutter without making the frame unusable mid-fight.
+- Death handling (rows clearly show when an enemy is dead).
 
-### Rated Stats integration (optional but supported)
-- Designed to plug into the Rated Stats family of addons.
-- Supports showing Rated Stats PvP rank / achievement icon overlays when the Rated Stats achievement module is installed and enabled.
+### Optional Rated Stats integration
+If you use **Rated Stats – Achievements**, BGE can show a rank/achievement icon context on the enemy list to help you spot high-experience players quickly.
 
----
+* * *
 
-## Compatibility
+## How to use (in-game)
 
-- **Retail only**
-- **Battleground-only scope** (not intended for arena frames)
+### Moving / locking the frame
+- Hover the frame to reveal the “Rated Stats - BGE” tab.
+- Right-click the tab:
+  - **Lock** to prevent accidental moves
+  - **Settings** to adjust layout and visuals
 
-Blizzard’s modern UI restrictions (secure templates, “secret” values, combat lockdown) mean some information cannot be read at all times, and some actions can’t happen during combat. This addon is built to degrade safely instead of throwing errors or tainting.
-
----
-
-## Install
-
-### CurseForge App
-Install normally through CurseForge (project: “BattlegroundEnemies – Rated Stats version”).
-
-### Manual
-1. Download the release zip
-2. Extract into:
-   `World of Warcraft/_retail_/Interface/AddOns/`
-3. Ensure the folder name matches the addon folder inside the zip
-4. Restart the game
-
----
-
-## Configuration
-
-In-game settings are exposed through the addon’s UI entry and the frame’s right-click menu:
-- Layout (rows/columns, sizes)
+### Settings
+The Settings UI exposes:
+- Layout (grouped/sorted layouts, rows/columns, sizing/gaps)
 - Visual styling (background tint, transparency)
-- Optional integration toggles (Rated Stats achievements/ranks)
+- Optional toggles (achievement/rank icon integration)
 
----
+* * *
 
-## Known limitations (by design)
+## Optional companion addons
 
-- In combat, frame sizing/position changes may be blocked (combat lockdown).
-- Some unit data can be unavailable until the game exposes it (especially early in BGs or during mass joins/leaves).
-- “Perfect” enemy tracking at all distances is intentionally not possible under modern Blizzard restrictions.
+These pair well with BGE:
 
----
+- **Rated Stats (core)** — Rated PvP match historian + scoreboard storage  
+  - Download: https://www.curseforge.com/wow/addons/rated-stats  
+  - Source: https://github.com/liamnap/RatedStats
 
-## Credits
+- **Rated Stats – Achievements** — PvP rank/achievement history on tooltips (and optional BGE icon integration)  
+  - Download: https://www.curseforge.com/wow/addons/rated-stats-achievements  
+  - Source: https://github.com/liamnap/RatedStats_Achiev
 
-Inspired by the original BattleGroundEnemies concept, but implemented and maintained as a Rated Stats-targeted battleground module.
+- **Rated Stats – NoChat** — Locks chat input in PvP so you can’t rage-type, while still seeing chat  
+  - Download: https://www.curseforge.com/wow/addons/rated-stats-nochat  
+  - Source: https://github.com/liamnap/RatedStats_NoChat
 
----
+* * *
 
-## License
+## Limitations (Blizzard restrictions)
 
-See repository for license details (if/when included).
+Retail’s modern UI rules (secure templates, combat lockdown, “secret” values) mean:
+- Some updates cannot happen while in combat (frame sizing/position changes may be blocked).
+- Some enemy/unit data is **not immediately available** at match start.
+
+* * *
+
+## Gallery
+
+Source gallery (CurseForge): https://www.curseforge.com/wow/addons/battlegroundenemies-rated-stats-version#gallery
+
+Click to expand screenshots
+
+### Rated Stats - BattleGround Enemies and Achievements
+![Rated Stats - BattleGround Enemies and Achievements](https://media.forgecdn.net/attachments/1511/51/screenshot-2026-02-02-190904-png.png)
+
+### Out of Range and Deaths
+![Out of Range and Deaths](https://media.forgecdn.net/attachments/1511/40/screenshot-2026-02-02-145127-png.png)
+
+### Rated Stats BattleGroundEnemies Settings
+![Rated Stats BattleGroundEnemies Settings](https://media.forgecdn.net/attachments/1511/30/screenshot-2026-02-02-190236-png.png)
+
+### Frame Move and Settings (tab right-click)
+![Frame Move and Settings](https://media.forgecdn.net/attachments/1511/59/screenshot-2026-02-02-191305-png.png)
+
+* * *
