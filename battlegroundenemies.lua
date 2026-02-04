@@ -1153,12 +1153,9 @@ function BGE:BuildRosterFromScoreboard()
             end
         end
         if myFactionIndex == nil then
-            local myFaction = UnitFactionGroup and UnitFactionGroup("player") or nil
-            if myFaction == "Alliance" then
-                myFactionIndex = 1
-            elseif myFaction == "Horde" then
-                myFactionIndex = 0
-            end
+            -- Fallback: use "true" match faction for the player (mercenary-safe).
+            -- UnitFactionGroup("player") reports your character's faction, not necessarily your BG team.
+            myFactionIndex = GetUnitTrueFactionIndex("player")
         end
         local okN, nn = pcall(GetNumBattlefieldScores)
         n = (okN and nn) or 0
@@ -1401,7 +1398,16 @@ BGE._anchorHidePending = false
 BGE._dropdownMenu = nil
 
 local function GetEnemyFactionIndex()
-    -- Prefer match team (handles mercenary / non-factional edge cases better than UnitFactionGroup).
+-- Prefer the match team when available (mercenary-safe).
+    if _G.C_PvP and _G.C_PvP.GetActiveMatchFaction then
+        local okF, f = pcall(_G.C_PvP.GetActiveMatchFaction)
+        if okF and type(f) == "number" then
+            local myIdx = NormalizeFactionIndex(f)
+            return (myIdx == 0 and 1) or 0
+        end
+    end
+
+    -- Next best: Battlefield API (can be available in instanced PvP).
     if _G.GetBattlefieldArenaFaction then
         local ok, fi = pcall(_G.GetBattlefieldArenaFaction)
         if ok and type(fi) == "number" then
@@ -1409,16 +1415,9 @@ local function GetEnemyFactionIndex()
         end
     end
 
-    -- Fallback: assume standard Horde-vs-Alliance.
-    local fac = UnitFactionGroup and UnitFactionGroup("player") or nil
-    if fac == "Horde" then
-        return 1 -- enemy = Alliance
-    elseif fac == "Alliance" then
-        return 0 -- enemy = Horde
-    end
-
-    -- Unknown -> default to Horde as enemy (red) to avoid invisible background.
-    return 0
+    -- Fallback: use player's true match faction (mercenary-safe), then invert.
+    local myIdx = GetUnitTrueFactionIndex("player")
+    return (myIdx == 0 and 1) or 0
 end
 
 function BGE:GetEnemyTeamColorRGB()
