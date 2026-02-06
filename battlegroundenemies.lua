@@ -499,7 +499,7 @@ end
 
 local function NormalizeRaceID(raceID)
     raceID = tonumber(raceID) or 0
-    -- Collapse known “multi-ID” races (matches BGEFixed’s intent, minimal list).
+    -- Collapse known “multi-ID” races
     -- Pandaren: 24/26 collapse to 25
     if raceID == 24 or raceID == 26 then return 25 end
     -- Dracthyr: 70 collapse to 52
@@ -568,7 +568,7 @@ local function CalculatePIDFull(raceID, classID, level, factionIndex, sex, honor
     factionIndex = tonumber(factionIndex) or 0
     sex = tonumber(sex) or 0
     honorLevel = tonumber(honorLevel) or 0
-    -- Multipliers chosen to minimize collisions (same structure as BGEFixed).
+    -- Multipliers chosen to minimize collisions
     return (raceID * 100000000000)
         + (classID * 1000000000)
         + (level * 10000000)
@@ -1195,7 +1195,7 @@ function BGE:BuildRosterFromScoreboard()
                     local sex = 0
                     local factionIndex = NormalizeFactionIndex(info.faction)
 
-                    -- If C_PvP.GetScoreInfo omitted/blocked fields, fall back to GetBattlefieldScore (BGEFixed style).
+                    -- If C_PvP.GetScoreInfo omitted/blocked fields, fall back to GetBattlefieldScore 
                     if (not full or not classToken) and _G.GetBattlefieldScore then
                         local nameL, _, _, _, _, factionL, rankL, raceL, _, classTokenL, _, _, _, _, _, specNameL = _G.GetBattlefieldScore(i)
                         if not full then full = SafeNonEmptyString(nameL) end
@@ -2185,7 +2185,7 @@ end
 function BGE:ApplyRowMacroTarget(row)
     if not row or row._preview then return end
 
-    -- Prefer realm-qualified targeting (matches BGEFixed behavior)
+    -- Prefer realm-qualified targeting 
     local targetName = row.fullName or row.name
     if type(targetName) ~= "string" or targetName == "" then
         if not InLockdown() then
@@ -4238,7 +4238,7 @@ function BGE:RefreshVisibility()
         end
         self.frame:SetAlpha(1)
 
-        -- BGEFixed-style: keep pulling HP/PWR from target/focus/ally-target tokens while in BG.
+        -- Keep pulling HP/PWR from target/focus/ally-target tokens while in BG.
         if IsInPVPInstance() and self._mode ~= "arena" then
             self:StartTargetScanner()
         else
