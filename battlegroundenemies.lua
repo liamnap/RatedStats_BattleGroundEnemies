@@ -4314,41 +4314,61 @@ function BGE:RefreshVisibility()
             if rated then
                 want = 8
             else
-                local maxPlayers = nil
-                local mapID = nil
-                if C_Map and C_Map.GetBestMapForUnit then
-                    local okM, mid = pcall(C_Map.GetBestMapForUnit, "player")
-                    if okM then mapID = mid end
-                end
-
-                if mapID and C_PvP and C_PvP.GetNumBattlegroundTypes and C_PvP.GetBattlegroundInfo then
-                    local okN, tN = pcall(C_PvP.GetNumBattlegroundTypes)
-                    if okN and type(tN) == "number" then
-                        for idx = 1, tN do
-                            local okI, bi = pcall(C_PvP.GetBattlegroundInfo, idx)
-                            if okI and bi and bi.mapID == mapID and type(bi.maxPlayers) == "number" then
-                                maxPlayers = bi.maxPlayers
-                                break
-                            end
-                        end
+                -- Prefer the live match bracket when available (10 / 15 / 40).
+                -- This avoids falling back to want=10 when mapID/maxPlayers resolution fails.
+                local bracket = nil
+                if C_PvP and C_PvP.GetActiveMatchBracket then
+                    local okB, b = pcall(C_PvP.GetActiveMatchBracket)
+                    if okB and type(b) == "number" and b > 0 then
+                        bracket = b
                     end
                 end
 
-                -- Prefer resolved maxPlayers (handles 10v10 variants on "15v15 maps").
-                if maxPlayers and maxPlayers > 15 then
-                    want = 40
-                elseif maxPlayers and maxPlayers == 15 then
-                    want = 15
-                elseif maxPlayers and maxPlayers == 10 then
-                    want = 10
+                if bracket then
+                    if bracket > 15 then
+                        want = 40
+                    elseif bracket == 15 then
+                        want = 15
+                    else
+                        want = 10
+                    end
                 else
-                    -- If we can't confidently resolve maxPlayers yet (mapID timing / API quirks),
-                    -- default to 10 for normal BGs.
-                    -- 15v15 maps are handled above via explicit mapIDs so we don't regress back to "stops at 10".
-                    want = 10
-                end
-            end
-        end
+                    local maxPlayers = nil
+                    local mapID = nil
+                    if C_Map and C_Map.GetBestMapForUnit then
+                        local okM, mid = pcall(C_Map.GetBestMapForUnit, "player")
+                        if okM then mapID = mid end
+                    end
+
+                    if mapID and C_PvP and C_PvP.GetNumBattlegroundTypes and C_PvP.GetBattlegroundInfo then
+                        local okN, tN = pcall(C_PvP.GetNumBattlegroundTypes)
+                        if okN and type(tN) == "number" then
+                            for idx = 1, tN do
+                                local okI, bi = pcall(C_PvP.GetBattlegroundInfo, idx)
+                                if okI and bi and bi.mapID == mapID and type(bi.maxPlayers) == "number" then
+                                    maxPlayers = bi.maxPlayers
+                                    break
+                                end
+                            end
+                        end
+                    end
+
+                    -- Prefer resolved maxPlayers (handles 10v10 variants on "15v15 maps").
+                    if maxPlayers and maxPlayers > 15 then
+                        want = 40
+                    elseif maxPlayers and maxPlayers == 15 then
+                        want = 15
+                    elseif maxPlayers and maxPlayers == 10 then
+                        want = 10
+                    else
+                        -- If we can't confidently resolve maxPlayers yet (mapID timing / API quirks),
+                        -- default to 10 for normal BGs.
+                        -- 15v15 maps are handled above via explicit mapIDs so we don't regress back to "stops at 10".
+                        want = 10
+                    end
+                end -- bracket
+            end -- rated
+        end -- preview/arena/bg
         -- Select the per-size layout profile for this match.
         -- This drives the columns/rows/width/height/gaps used by ApplyAnchors/ApplyRowLayout.
         -- Only pick a live-match profile inside PvP; preview uses ResolvePreviewProfilePrefix() at the top.
