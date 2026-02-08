@@ -1159,6 +1159,43 @@ function BGE:BuildRosterFromScoreboard()
         end
         local okN, nn = pcall(GetNumBattlefieldScores)
         n = (okN and nn) or 0
+
+        -- If Blizzard APIs can't reliably tell our *match* faction (merc / cross-faction),
+        -- derive it from the scoreboard row for the local player.
+        if n > 0 then
+            local pName, pRealm = nil, nil
+            if UnitFullName then
+                pName, pRealm = UnitFullName("player")
+            else
+                pName = UnitName and UnitName("player") or nil
+                pRealm = GetRealmName and GetRealmName() or nil
+            end
+            local pFull = (pName and pRealm and (pName .. "-" .. pRealm)) or pName
+            if pName then
+                for ii = 1, n do
+                    local okP, infoP = pcall(_G.C_PvP.GetScoreInfo, ii)
+                    if (not okP or type(infoP) ~= "table") and _G.GetBattlefieldScore then
+                        local nameL, _, _, _, _, factionL = _G.GetBattlefieldScore(ii)
+                        if nameL ~= nil then
+                            infoP = infoP or {}
+                            infoP.name = infoP.name or nameL
+                            infoP.faction = infoP.faction or factionL
+                            okP = true
+                        end
+                    end
+                    if okP and type(infoP) == "table" then
+                        local nFull = SafeNonEmptyString(infoP.name)
+                        if nFull == pFull or nFull == pName then
+                            if type(infoP.faction) == "number" then
+                                myFactionIndex = NormalizeFactionIndex(infoP.faction)
+                            end
+                            break
+                        end
+                    end
+                end
+            end
+        end
+
         for i = 1, n do
             local ok, info = pcall(_G.C_PvP.GetScoreInfo, i)
             -- BG start: GetScoreInfo can be nil/error for some indices. Don't drop the slot; use GetBattlefieldScore.
@@ -4284,6 +4321,7 @@ function BGE:RefreshVisibility()
                     if okM then mapID = mid end
                 end
 
+                -- BattlegroundInfo includes maxPlayers and optional mapID; match by mapID.
                 if mapID and C_PvP and C_PvP.GetNumBattlegroundTypes and C_PvP.GetBattlegroundInfo then
                     local okN, tN = pcall(C_PvP.GetNumBattlegroundTypes)
                     if okN and type(tN) == "number" then
@@ -4307,11 +4345,10 @@ function BGE:RefreshVisibility()
                 else
                     -- If we can't confidently resolve maxPlayers yet (mapID timing / API quirks),
                     -- default to 10 for normal BGs.
-                    -- 15v15 maps are handled above via explicit mapIDs so we don't regress back to "stops at 10".
                     want = 10
                 end
-            end
-        end
+            end -- rated
+        end -- preview/arena/bg
         -- Select the per-size layout profile for this match.
         -- This drives the columns/rows/width/height/gaps used by ApplyAnchors/ApplyRowLayout.
         -- Only pick a live-match profile inside PvP; preview uses ResolvePreviewProfilePrefix() at the top.
