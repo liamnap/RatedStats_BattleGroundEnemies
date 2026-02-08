@@ -1159,6 +1159,43 @@ function BGE:BuildRosterFromScoreboard()
         end
         local okN, nn = pcall(GetNumBattlefieldScores)
         n = (okN and nn) or 0
+
+        -- If Blizzard APIs can't reliably tell our *match* faction (merc / cross-faction),
+        -- derive it from the scoreboard row for the local player.
+        if n > 0 then
+            local pName, pRealm = nil, nil
+            if UnitFullName then
+                pName, pRealm = UnitFullName("player")
+            else
+                pName = UnitName and UnitName("player") or nil
+                pRealm = GetRealmName and GetRealmName() or nil
+            end
+            local pFull = (pName and pRealm and (pName .. "-" .. pRealm)) or pName
+            if pName then
+                for ii = 1, n do
+                    local okP, infoP = pcall(_G.C_PvP.GetScoreInfo, ii)
+                    if (not okP or type(infoP) ~= "table") and _G.GetBattlefieldScore then
+                        local nameL, _, _, _, _, factionL = _G.GetBattlefieldScore(ii)
+                        if nameL ~= nil then
+                            infoP = infoP or {}
+                            infoP.name = infoP.name or nameL
+                            infoP.faction = infoP.faction or factionL
+                            okP = true
+                        end
+                    end
+                    if okP and type(infoP) == "table" then
+                        local nFull = SafeNonEmptyString(infoP.name)
+                        if nFull == pFull or nFull == pName then
+                            if type(infoP.faction) == "number" then
+                                myFactionIndex = NormalizeFactionIndex(infoP.faction)
+                            end
+                            break
+                        end
+                    end
+                end
+            end
+        end
+
         for i = 1, n do
             local ok, info = pcall(_G.C_PvP.GetScoreInfo, i)
             -- BG start: GetScoreInfo can be nil/error for some indices. Don't drop the slot; use GetBattlefieldScore.
