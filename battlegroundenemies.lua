@@ -4315,14 +4315,23 @@ function BGE:RefreshVisibility()
                 want = 8
             else
                 local maxPlayers = nil
+
+                -- Primary source of truth: current instance maxPlayers (no mapID/index guessing).
+                -- GetInstanceInfo() returns: name, instanceType, difficultyID, difficultyName, maxPlayers, ...
+                local okGI, _, instType, _, instMaxPlayers = pcall(_G.GetInstanceInfo)
+                if okGI and instType == "pvp" and type(instMaxPlayers) == "number" and instMaxPlayers > 0 then
+                    maxPlayers = instMaxPlayers
+                end
+
+                -- Fallback: BattlegroundInfo list (can fail if uiMapID is a child map).
                 local mapID = nil
-                if C_Map and C_Map.GetBestMapForUnit then
+                if not maxPlayers and C_Map and C_Map.GetBestMapForUnit then
                     local okM, mid = pcall(C_Map.GetBestMapForUnit, "player")
                     if okM then mapID = mid end
                 end
 
                 -- BattlegroundInfo includes maxPlayers and optional mapID; match by mapID.
-                if mapID and C_PvP and C_PvP.GetNumBattlegroundTypes and C_PvP.GetBattlegroundInfo then
+                if not maxPlayers and mapID and C_PvP and C_PvP.GetNumBattlegroundTypes and C_PvP.GetBattlegroundInfo then
                     local okN, tN = pcall(C_PvP.GetNumBattlegroundTypes)
                     if okN and type(tN) == "number" then
                         for idx = 1, tN do
