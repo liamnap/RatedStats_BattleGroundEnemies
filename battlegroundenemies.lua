@@ -4315,14 +4315,66 @@ function BGE:RefreshVisibility()
                 want = 8
             else
                 local maxPlayers = nil
+
+                -- Primary source of truth: current instance maxPlayers (no mapID/index guessing).
+                -- GetInstanceInfo() returns: name, instanceType, difficultyID, difficultyName, maxPlayers, ...
+                local okGI, instName, instType, _, instMaxPlayers = pcall(_G.GetInstanceInfo)
+                if okGI and instType == "pvp" and type(instMaxPlayers) == "number" and instMaxPlayers > 0 then
+                    maxPlayers = instMaxPlayers
+
+                    -- 15v15 map-type override:
+                    -- Some 15v15 BGs can report 10 briefly/incorrectly on zone-in; force 15 for these maps.
+                    -- AB=461, EotS=482, DWG=935 (InstanceMapID from GetInstanceInfo()).
+                    if maxPlayers == 10 and (instMapID == 461 or instMapID == 482 or instMapID == 935) then
+                        maxPlayers = 15
+                    end
+
+                    -- Epic BG exceptions: these are 35-per-faction (not 40).
+                    -- Ashran / Isle of Conquest / Battle for Wintergrasp were set to 35 in Blizzard patch notes.
+                    -- (GetInstanceInfo can still report 40, so clamp it here.)
+                    if maxPlayers == 40 then
+                        if instName == "Ashran"
+                            or instName == "Isle of Conquest"
+                            or instName == "Battle for Wintergrasp" then
+                            maxPlayers = 35
+                        end
+                    end
+
+                    -- Success: clear any pending retry state.
+                    self._mpRetryCount = nil
+                    self._mpRetryPending = nil
+                elseif okGI and instType == "pvp" and (not preview) and self._mode ~= "arena" then
+                    -- Zone-in timing: maxPlayers can be unavailable briefly. Retry 1s up to 3 times.
+                    self._mpRetryCount = (self._mpRetryCount or 0)
+                    if (self._mpRetryCount < 3) and (not self._mpRetryPending) and _G.C_Timer and _G.C_Timer.After then
+                        self._mpRetryPending = true
+                        self._mpRetryCount = self._mpRetryCount + 1
+                        _G.C_Timer.After(1, function()
+                            if not self then return end
+                            self._mpRetryPending = nil
+                            -- Only retry while still in a PvP instance.
+                            if IsInPVPInstance() then
+                                self:RefreshVisibility()
+                            else
+                                self._mpRetryCount = nil
+                            end
+                        end)
+                    end
+                    -- Don't lock in fallback sizing while retries are in flight.
+                    if not maxPlayers and self._mpRetryPending then
+                        return
+                    end
+                end
+
+                -- Fallback: BattlegroundInfo list (can fail if uiMapID is a child map).
                 local mapID = nil
-                if C_Map and C_Map.GetBestMapForUnit then
+                if not maxPlayers and C_Map and C_Map.GetBestMapForUnit then
                     local okM, mid = pcall(C_Map.GetBestMapForUnit, "player")
                     if okM then mapID = mid end
                 end
 
                 -- BattlegroundInfo includes maxPlayers and optional mapID; match by mapID.
-                if mapID and C_PvP and C_PvP.GetNumBattlegroundTypes and C_PvP.GetBattlegroundInfo then
+                if not maxPlayers and mapID and C_PvP and C_PvP.GetNumBattlegroundTypes and C_PvP.GetBattlegroundInfo then
                     local okN, tN = pcall(C_PvP.GetNumBattlegroundTypes)
                     if okN and type(tN) == "number" then
                         for idx = 1, tN do
@@ -4337,7 +4389,11 @@ function BGE:RefreshVisibility()
 
                 -- Prefer resolved maxPlayers (handles 10v10 variants on "15v15 maps").
                 if maxPlayers and maxPlayers > 15 then
-                    want = 40
+                    if maxPlayers == 35 then
+                        want = 35
+                    else
+                        want = 40
+                    end
                 elseif maxPlayers and maxPlayers == 15 then
                     want = 15
                 elseif maxPlayers and maxPlayers == 10 then
