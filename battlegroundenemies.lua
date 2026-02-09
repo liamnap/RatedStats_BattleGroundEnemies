@@ -4318,7 +4318,7 @@ function BGE:RefreshVisibility()
 
                 -- Primary source of truth: current instance maxPlayers (no mapID/index guessing).
                 -- GetInstanceInfo() returns: name, instanceType, difficultyID, difficultyName, maxPlayers, ...
-                local okGI, _, instType, _, instMaxPlayers = pcall(_G.GetInstanceInfo)
+                local okGI, instName, instType, _, instMaxPlayers = pcall(_G.GetInstanceInfo)
                 if okGI and instType == "pvp" and type(instMaxPlayers) == "number" and instMaxPlayers > 0 then
                     maxPlayers = instMaxPlayers
 
@@ -4326,7 +4326,6 @@ function BGE:RefreshVisibility()
                     -- Ashran / Isle of Conquest / Battle for Wintergrasp were set to 35 in Blizzard patch notes.
                     -- (GetInstanceInfo can still report 40, so clamp it here.)
                     if maxPlayers == 40 then
-                        local instName = select(1, _G.GetInstanceInfo())
                         if instName == "Ashran"
                             or instName == "Isle of Conquest"
                             or instName == "Battle for Wintergrasp" then
@@ -4355,7 +4354,7 @@ function BGE:RefreshVisibility()
                         end)
                     end
                     -- Don't lock in fallback sizing while retries are in flight.
-                    if not maxPlayers and (self._mpRetryPending or ((self._mpRetryCount or 0) > 0 and (self._mpRetryCount or 0) <= 3)) then
+                    if not maxPlayers and self._mpRetryPending then
                         return
                     end
                 end
@@ -4383,7 +4382,11 @@ function BGE:RefreshVisibility()
 
                 -- Prefer resolved maxPlayers (handles 10v10 variants on "15v15 maps").
                 if maxPlayers and maxPlayers > 15 then
-                    want = 40
+                    if maxPlayers == 35 then
+                        want = 35
+                    else
+                        want = 40
+                    end
                 elseif maxPlayers and maxPlayers == 15 then
                     want = 15
                 elseif maxPlayers and maxPlayers == 10 then
