@@ -4321,6 +4321,19 @@ function BGE:RefreshVisibility()
                 local okGI, _, instType, _, instMaxPlayers = pcall(_G.GetInstanceInfo)
                 if okGI and instType == "pvp" and type(instMaxPlayers) == "number" and instMaxPlayers > 0 then
                     maxPlayers = instMaxPlayers
+
+                    -- Epic BG exceptions: these are 35-per-faction (not 40).
+                    -- Ashran / Isle of Conquest / Battle for Wintergrasp were set to 35 in Blizzard patch notes.
+                    -- (GetInstanceInfo can still report 40, so clamp it here.)
+                    if maxPlayers == 40 then
+                        local instName = select(1, _G.GetInstanceInfo())
+                        if instName == "Ashran"
+                            or instName == "Isle of Conquest"
+                            or instName == "Battle for Wintergrasp" then
+                            maxPlayers = 35
+                        end
+                    end
+
                     -- Success: clear any pending retry state.
                     self._mpRetryCount = nil
                     self._mpRetryPending = nil
