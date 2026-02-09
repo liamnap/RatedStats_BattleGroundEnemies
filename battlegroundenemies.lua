@@ -4321,6 +4321,30 @@ function BGE:RefreshVisibility()
                 local okGI, _, instType, _, instMaxPlayers = pcall(_G.GetInstanceInfo)
                 if okGI and instType == "pvp" and type(instMaxPlayers) == "number" and instMaxPlayers > 0 then
                     maxPlayers = instMaxPlayers
+                    -- Success: clear any pending retry state.
+                    self._mpRetryCount = nil
+                    self._mpRetryPending = nil
+                elseif okGI and instType == "pvp" and (not preview) and self._mode ~= "arena" then
+                    -- Zone-in timing: maxPlayers can be unavailable briefly. Retry 1s up to 3 times.
+                    self._mpRetryCount = (self._mpRetryCount or 0)
+                    if (self._mpRetryCount < 3) and (not self._mpRetryPending) and _G.C_Timer and _G.C_Timer.After then
+                        self._mpRetryPending = true
+                        self._mpRetryCount = self._mpRetryCount + 1
+                        _G.C_Timer.After(1, function()
+                            if not self then return end
+                            self._mpRetryPending = nil
+                            -- Only retry while still in a PvP instance.
+                            if IsInPVPInstance() then
+                                self:RefreshVisibility()
+                            else
+                                self._mpRetryCount = nil
+                            end
+                        end)
+                    end
+                    -- Don't lock in fallback sizing while retries are in flight.
+                    if not maxPlayers and (self._mpRetryPending or ((self._mpRetryCount or 0) > 0 and (self._mpRetryCount or 0) <= 3)) then
+                        return
+                    end
                 end
 
                 -- Fallback: BattlegroundInfo list (can fail if uiMapID is a child map).
