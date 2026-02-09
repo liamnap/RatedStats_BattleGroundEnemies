@@ -4322,6 +4322,13 @@ function BGE:RefreshVisibility()
                 if okGI and instType == "pvp" and type(instMaxPlayers) == "number" and instMaxPlayers > 0 then
                     maxPlayers = instMaxPlayers
 
+                    -- 15v15 map-type override:
+                    -- Some 15v15 BGs can report 10 briefly/incorrectly on zone-in; force 15 for these maps.
+                    -- AB=461, EotS=482, DWG=935 (InstanceMapID from GetInstanceInfo()).
+                    if maxPlayers == 10 and (instMapID == 461 or instMapID == 482 or instMapID == 935) then
+                        maxPlayers = 15
+                    end
+
                     -- Epic BG exceptions: these are 35-per-faction (not 40).
                     -- Ashran / Isle of Conquest / Battle for Wintergrasp were set to 35 in Blizzard patch notes.
                     -- (GetInstanceInfo can still report 40, so clamp it here.)
