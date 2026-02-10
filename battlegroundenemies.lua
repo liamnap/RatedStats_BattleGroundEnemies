@@ -4287,14 +4287,22 @@ function BGE:RefreshVisibility()
         -- which prevents rows 11..15 from ever existing.
         local want = 10
         local rated = false
+        local isRatedBG = false
+        local isRatedSoloRBG = false
 
         if (not preview) and IsInPVPInstance() and self._mode ~= "arena" then
-            if C_PvP and C_PvP.IsRatedBattleground then
+            -- Distinguish Rated BG (10v10) vs Rated Solo RBG / Blitz (8v8)
+            if C_PvP and C_PvP.IsRatedSoloRBG then
+                local okS, s = pcall(C_PvP.IsRatedSoloRBG)
+                if okS and s then isRatedSoloRBG = true end
+            end
+
+            if (not isRatedSoloRBG) and C_PvP and C_PvP.IsRatedBattleground then
                 local okR, r = pcall(C_PvP.IsRatedBattleground)
-                if okR and r then rated = true end
-            elseif _G.IsRatedBattleground then
+                if okR and r then isRatedBG = true end
+            elseif (not isRatedSoloRBG) and _G.IsRatedBattleground then
                 local okR, r = pcall(_G.IsRatedBattleground)
-                if okR and r then rated = true end
+                if okR and r then isRatedBG = true end
             end
         end
 
@@ -4311,15 +4319,10 @@ function BGE:RefreshVisibility()
             --   else: 10
             --   else: 15 (create enough rows for 15v15; unused rows stay hidden in 10v10)
 
-            if rated then
-                -- Rated BG is 10v10. Blitz/SoloRBG is 8v8.
-                -- Use instance maxPlayers to distinguish when possible.
-                local okGI, _, instType, _, _, instMaxPlayers = pcall(_G.GetInstanceInfo)
-                if okGI and instType == "pvp" and type(instMaxPlayers) == "number" and instMaxPlayers == 8 then
-                    want = 8
-                else
-                    want = 10
-                end
+            if isRatedSoloRBG then
+                want = 8
+            elseif isRatedBG then
+                want = 10
             else
                 local maxPlayers = nil
 
@@ -4415,9 +4418,9 @@ function BGE:RefreshVisibility()
         -- This drives the columns/rows/width/height/gaps used by ApplyAnchors/ApplyRowLayout.
         -- Only pick a live-match profile inside PvP; preview uses ResolvePreviewProfilePrefix() at the top.
         if (not preview) and IsInPVPInstance() and self._mode ~= "arena" then
-            if rated and want == 8 then
+            if isRatedSoloRBG and want == 8 then
                 self._profilePrefix = "bgeRated"
-            elseif rated then
+            elseif isRatedBG then
                 self._profilePrefix = "bge10"
             elseif want and want > 15 then
                 self._profilePrefix = "bgeLarge"
