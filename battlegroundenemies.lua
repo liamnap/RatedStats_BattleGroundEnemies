@@ -4351,6 +4351,7 @@ function BGE:RefreshVisibility()
                     if (self._mpRetryCount < 3) and (not self._mpRetryPending) and _G.C_Timer and _G.C_Timer.After then
                         self._mpRetryPending = true
                         self._mpRetryCount = self._mpRetryCount + 1
+                        print("DEBUG_BGEMAX", "Retry scheduling", self._mpRetryCount, "instName", tostring(instName), "instType", tostring(instType), "instMaxPlayers", tostring(instMaxPlayers))
                         _G.C_Timer.After(1, function()
                             if not self then return end
                             self._mpRetryPending = nil
@@ -4403,6 +4404,7 @@ function BGE:RefreshVisibility()
                 else
                     -- If we can't confidently resolve maxPlayers yet (mapID timing / API quirks),
                     -- default to 10 for normal BGs.
+                    print("DEBUG_BGEMAX", "Falling back to want=10 (maxPlayers unresolved)")
                     want = 10
                 end
             end -- rated
