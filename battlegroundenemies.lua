@@ -4317,26 +4317,29 @@ function BGE:RefreshVisibility()
                 local maxPlayers = nil
 
                 -- Primary source of truth: current instance maxPlayers (no mapID/index guessing).
-                -- GetInstanceInfo() returns: name, instanceType, difficultyID, difficultyName, maxPlayers, ...
-                local okGI, instName, instType, _, instMaxPlayers = pcall(_G.GetInstanceInfo)
+                -- GetInstanceInfo() returns: 1 name, 2 instanceType, 3 difficultyID, 4 difficultyName, 5 maxPlayers, 6 dynamicDifficulty,
+                -- 7 isDynamic, 8 instanceMapID, ...
+                local okGI, instName, instType, _, _, instMaxPlayers, _, instMapID = pcall(_G.GetInstanceInfo)
                 if okGI and instType == "pvp" and type(instMaxPlayers) == "number" and instMaxPlayers > 0 then
                     maxPlayers = instMaxPlayers
+                    print("DEBUG_BGEMAX", "GetInstanceInfo maxPlayers", maxPlayers, "for", instName)
 
                     -- 15v15 map-type override:
                     -- Some 15v15 BGs can report 10 briefly/incorrectly on zone-in; force 15 for these maps.
                     -- AB=461, EotS=482, DWG=935 (InstanceMapID from GetInstanceInfo()).
-                    if maxPlayers == 10 and (instMapID == 461 or instMapID == 482 or instMapID == 935) then
+                    if maxPlayers == 10 and (instName == "Arathi Basin" or instName == "Eye of the Storm" or instName == "Deepwind Gorge") then
                         maxPlayers = 15
+                        print("DEBUG_BGEMAX", "Forcing maxPlayers=15 for 15v15 map", instName)
                     end
 
                     -- Epic BG exceptions: these are 35-per-faction (not 40).
                     -- Ashran / Isle of Conquest / Battle for Wintergrasp were set to 35 in Blizzard patch notes.
                     -- (GetInstanceInfo can still report 40, so clamp it here.)
                     if maxPlayers == 40 then
-                        if instName == "Ashran"
-                            or instName == "Isle of Conquest"
-                            or instName == "Battle for Wintergrasp" then
+                        print("DEBUG_BGEMAX", "Checking for epic BG exception for", instName)
+                        if instName == "Ashran" then
                             maxPlayers = 35
+                            print("DEBUG_BGEMAX", "Forcing maxPlayers=35 for Ashran")
                         end
                     end
 
@@ -4346,9 +4349,10 @@ function BGE:RefreshVisibility()
                 elseif okGI and instType == "pvp" and (not preview) and self._mode ~= "arena" then
                     -- Zone-in timing: maxPlayers can be unavailable briefly. Retry 1s up to 3 times.
                     self._mpRetryCount = (self._mpRetryCount or 0)
-                    if (self._mpRetryCount < 3) and (not self._mpRetryPending) and _G.C_Timer and _G.C_Timer.After then
+                    if (self._mpRetryCount < 10) and (not self._mpRetryPending) and _G.C_Timer and _G.C_Timer.After then
                         self._mpRetryPending = true
                         self._mpRetryCount = self._mpRetryCount + 1
+                        print("DEBUG_BGEMAX", "Retry scheduling", self._mpRetryCount, "instName", tostring(instName), "instType", tostring(instType), "instMaxPlayers", tostring(instMaxPlayers))
                         _G.C_Timer.After(1, function()
                             if not self then return end
                             self._mpRetryPending = nil
@@ -4401,6 +4405,7 @@ function BGE:RefreshVisibility()
                 else
                     -- If we can't confidently resolve maxPlayers yet (mapID timing / API quirks),
                     -- default to 10 for normal BGs.
+                    print("DEBUG_BGEMAX", "Falling back to want=10 (maxPlayers unresolved)")
                     want = 10
                 end
             end -- rated
