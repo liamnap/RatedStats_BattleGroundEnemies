@@ -4321,20 +4321,24 @@ function BGE:RefreshVisibility()
                 local okGI, instName, instType, _, instMaxPlayers = pcall(_G.GetInstanceInfo)
                 if okGI and instType == "pvp" and type(instMaxPlayers) == "number" and instMaxPlayers > 0 then
                     maxPlayers = instMaxPlayers
+                    print("DEBUG_BGEMAX", "GetInstanceInfo maxPlayers", maxPlayers, "for", instName)
 
                     -- 15v15 map-type override:
                     -- Some 15v15 BGs can report 10 briefly/incorrectly on zone-in; force 15 for these maps.
                     -- AB=461, EotS=482, DWG=935 (InstanceMapID from GetInstanceInfo()).
                     if maxPlayers == 10 and (instName == "Arathi Basin" or instName == "Eye of the Storm" or instName == "Deepwind Gorge") then
                         maxPlayers = 15
+                        print("DEBUG_BGEMAX", "Forcing maxPlayers=15 for 15v15 map", instName)
                     end
 
                     -- Epic BG exceptions: these are 35-per-faction (not 40).
                     -- Ashran / Isle of Conquest / Battle for Wintergrasp were set to 35 in Blizzard patch notes.
                     -- (GetInstanceInfo can still report 40, so clamp it here.)
                     if maxPlayers == 40 then
+                        print("DEBUG_BGEMAX", "Checking for epic BG exception for", instName)
                         if instName == "Ashran" then
                             maxPlayers = 35
+                            print("DEBUG_BGEMAX", "Forcing maxPlayers=35 for Ashran")
                         end
                     end
 
