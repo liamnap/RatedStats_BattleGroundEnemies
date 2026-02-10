@@ -4348,7 +4348,7 @@ function BGE:RefreshVisibility()
                 elseif okGI and instType == "pvp" and (not preview) and self._mode ~= "arena" then
                     -- Zone-in timing: maxPlayers can be unavailable briefly. Retry 1s up to 3 times.
                     self._mpRetryCount = (self._mpRetryCount or 0)
-                    if (self._mpRetryCount < 3) and (not self._mpRetryPending) and _G.C_Timer and _G.C_Timer.After then
+                    if (self._mpRetryCount < 10) and (not self._mpRetryPending) and _G.C_Timer and _G.C_Timer.After then
                         self._mpRetryPending = true
                         self._mpRetryCount = self._mpRetryCount + 1
                         print("DEBUG_BGEMAX", "Retry scheduling", self._mpRetryCount, "instName", tostring(instName), "instType", tostring(instType), "instMaxPlayers", tostring(instMaxPlayers))
