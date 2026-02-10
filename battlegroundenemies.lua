@@ -4287,14 +4287,22 @@ function BGE:RefreshVisibility()
         -- which prevents rows 11..15 from ever existing.
         local want = 10
         local rated = false
+        local isRatedBG = false
+        local isRatedSoloRBG = false
 
         if (not preview) and IsInPVPInstance() and self._mode ~= "arena" then
-            if C_PvP and C_PvP.IsRatedBattleground then
+            -- Distinguish Rated BG (10v10) vs Rated Solo RBG / Blitz (8v8)
+            if C_PvP and C_PvP.IsRatedSoloRBG then
+                local okS, s = pcall(C_PvP.IsRatedSoloRBG)
+                if okS and s then isRatedSoloRBG = true end
+            end
+
+            if (not isRatedSoloRBG) and C_PvP and C_PvP.IsRatedBattleground then
                 local okR, r = pcall(C_PvP.IsRatedBattleground)
-                if okR and r then rated = true end
-            elseif _G.IsRatedBattleground then
+                if okR and r then isRatedBG = true end
+            elseif (not isRatedSoloRBG) and _G.IsRatedBattleground then
                 local okR, r = pcall(_G.IsRatedBattleground)
-                if okR and r then rated = true end
+                if okR and r then isRatedBG = true end
             end
         end
 
@@ -4304,15 +4312,17 @@ function BGE:RefreshVisibility()
             want = self.arenaMax or 5
         else
             -- want rules (locale-safe via mapID):
-            -- rated: 8
+            -- rated: 10 (RBG), blitz/solo rbg: 8
             -- not rated:
             --   if bg maxPlayers > 15: 40
             --   if bg maxPlayers == 15: 15   (AB/EotS/DWG are 15s; this also survives locale)
             --   else: 10
             --   else: 15 (create enough rows for 15v15; unused rows stay hidden in 10v10)
 
-            if rated then
+            if isRatedSoloRBG then
                 want = 8
+            elseif isRatedBG then
+                want = 10
             else
                 local maxPlayers = nil
 
@@ -4322,24 +4332,20 @@ function BGE:RefreshVisibility()
                 local okGI, instName, instType, _, _, instMaxPlayers, _, instMapID = pcall(_G.GetInstanceInfo)
                 if okGI and instType == "pvp" and type(instMaxPlayers) == "number" and instMaxPlayers > 0 then
                     maxPlayers = instMaxPlayers
-                    print("DEBUG_BGEMAX", "GetInstanceInfo maxPlayers", maxPlayers, "for", instName)
 
                     -- 15v15 map-type override:
                     -- Some 15v15 BGs can report 10 briefly/incorrectly on zone-in; force 15 for these maps.
                     -- AB=461, EotS=482, DWG=935 (InstanceMapID from GetInstanceInfo()).
                     if maxPlayers == 10 and (instName == "Arathi Basin" or instName == "Eye of the Storm" or instName == "Deepwind Gorge") then
                         maxPlayers = 15
-                        print("DEBUG_BGEMAX", "Forcing maxPlayers=15 for 15v15 map", instName)
                     end
 
                     -- Epic BG exceptions: these are 35-per-faction (not 40).
                     -- Ashran / Isle of Conquest / Battle for Wintergrasp were set to 35 in Blizzard patch notes.
                     -- (GetInstanceInfo can still report 40, so clamp it here.)
                     if maxPlayers == 40 then
-                        print("DEBUG_BGEMAX", "Checking for epic BG exception for", instName)
                         if instName == "Ashran" then
                             maxPlayers = 35
-                            print("DEBUG_BGEMAX", "Forcing maxPlayers=35 for Ashran")
                         end
                     end
 
@@ -4352,7 +4358,6 @@ function BGE:RefreshVisibility()
                     if (self._mpRetryCount < 10) and (not self._mpRetryPending) and _G.C_Timer and _G.C_Timer.After then
                         self._mpRetryPending = true
                         self._mpRetryCount = self._mpRetryCount + 1
-                        print("DEBUG_BGEMAX", "Retry scheduling", self._mpRetryCount, "instName", tostring(instName), "instType", tostring(instType), "instMaxPlayers", tostring(instMaxPlayers))
                         _G.C_Timer.After(1, function()
                             if not self then return end
                             self._mpRetryPending = nil
@@ -4405,7 +4410,6 @@ function BGE:RefreshVisibility()
                 else
                     -- If we can't confidently resolve maxPlayers yet (mapID timing / API quirks),
                     -- default to 10 for normal BGs.
-                    print("DEBUG_BGEMAX", "Falling back to want=10 (maxPlayers unresolved)")
                     want = 10
                 end
             end -- rated
@@ -4414,8 +4418,10 @@ function BGE:RefreshVisibility()
         -- This drives the columns/rows/width/height/gaps used by ApplyAnchors/ApplyRowLayout.
         -- Only pick a live-match profile inside PvP; preview uses ResolvePreviewProfilePrefix() at the top.
         if (not preview) and IsInPVPInstance() and self._mode ~= "arena" then
-            if rated then
+            if isRatedSoloRBG and want == 8 then
                 self._profilePrefix = "bgeRated"
+            elseif isRatedBG then
+                self._profilePrefix = "bge10"
             elseif want and want > 15 then
                 self._profilePrefix = "bgeLarge"
             elseif want == 15 then
