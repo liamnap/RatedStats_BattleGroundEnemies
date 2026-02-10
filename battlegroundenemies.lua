@@ -4304,7 +4304,7 @@ function BGE:RefreshVisibility()
             want = self.arenaMax or 5
         else
             -- want rules (locale-safe via mapID):
-            -- rated: 8
+            -- rated: 10 (RBG), blitz/solo rbg: 8
             -- not rated:
             --   if bg maxPlayers > 15: 40
             --   if bg maxPlayers == 15: 15   (AB/EotS/DWG are 15s; this also survives locale)
@@ -4312,7 +4312,14 @@ function BGE:RefreshVisibility()
             --   else: 15 (create enough rows for 15v15; unused rows stay hidden in 10v10)
 
             if rated then
-                want = 8
+                -- Rated BG is 10v10. Blitz/SoloRBG is 8v8.
+                -- Use instance maxPlayers to distinguish when possible.
+                local okGI, _, instType, _, _, instMaxPlayers = pcall(_G.GetInstanceInfo)
+                if okGI and instType == "pvp" and type(instMaxPlayers) == "number" and instMaxPlayers == 8 then
+                    want = 8
+                else
+                    want = 10
+                end
             else
                 local maxPlayers = nil
 
@@ -4408,8 +4415,10 @@ function BGE:RefreshVisibility()
         -- This drives the columns/rows/width/height/gaps used by ApplyAnchors/ApplyRowLayout.
         -- Only pick a live-match profile inside PvP; preview uses ResolvePreviewProfilePrefix() at the top.
         if (not preview) and IsInPVPInstance() and self._mode ~= "arena" then
-            if rated then
+            if rated and want == 8 then
                 self._profilePrefix = "bgeRated"
+            elseif rated then
+                self._profilePrefix = "bge10"
             elseif want and want > 15 then
                 self._profilePrefix = "bgeLarge"
             elseif want == 15 then
