@@ -4317,8 +4317,9 @@ function BGE:RefreshVisibility()
                 local maxPlayers = nil
 
                 -- Primary source of truth: current instance maxPlayers (no mapID/index guessing).
-                -- GetInstanceInfo() returns: name, instanceType, difficultyID, difficultyName, maxPlayers, ...
-                local okGI, instName, instType, _, instMaxPlayers = pcall(_G.GetInstanceInfo)
+                -- GetInstanceInfo() returns: 1 name, 2 instanceType, 3 difficultyID, 4 difficultyName, 5 maxPlayers, 6 dynamicDifficulty,
+                -- 7 isDynamic, 8 instanceMapID, ...
+                local okGI, instName, instType, _, _, instMaxPlayers, _, instMapID = pcall(_G.GetInstanceInfo)
                 if okGI and instType == "pvp" and type(instMaxPlayers) == "number" and instMaxPlayers > 0 then
                     maxPlayers = instMaxPlayers
                     print("DEBUG_BGEMAX", "GetInstanceInfo maxPlayers", maxPlayers, "for", instName)
