@@ -4325,7 +4325,7 @@ function BGE:RefreshVisibility()
                     -- 15v15 map-type override:
                     -- Some 15v15 BGs can report 10 briefly/incorrectly on zone-in; force 15 for these maps.
                     -- AB=461, EotS=482, DWG=935 (InstanceMapID from GetInstanceInfo()).
-                    if maxPlayers == 10 and (instMapID == 461 or instMapID == 482 or instMapID == 935) then
+                    if maxPlayers == 10 and (instName == "Arathi Basin" or instName == "Eye of the Storm" or instName == "Deepwind Gorge") then
                         maxPlayers = 15
                     end
 
@@ -4333,9 +4333,7 @@ function BGE:RefreshVisibility()
                     -- Ashran / Isle of Conquest / Battle for Wintergrasp were set to 35 in Blizzard patch notes.
                     -- (GetInstanceInfo can still report 40, so clamp it here.)
                     if maxPlayers == 40 then
-                        if instName == "Ashran"
-                            or instName == "Isle of Conquest"
-                            or instName == "Battle for Wintergrasp" then
+                        if instName == "Ashran" then
                             maxPlayers = 35
                         end
                     end
