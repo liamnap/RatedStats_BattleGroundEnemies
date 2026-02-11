@@ -303,7 +303,12 @@ end
 -- Scan current nameplates and bind GUID matches to seeded rows.
 function BGE:ScanNameplatesForGuidBindings()
     if self._mode == "arena" then return end
-    if not self.rowByGuid or not self.rowByUnit then return end
+    if not self.rowByUnit then return end
+    -- Allow scanning even when GUID map is unavailable (scoreboard locked / secret),
+    -- as long as we have *some* seeded map to bind against.
+    if not (self.rowByGuid or self.rowByFullName or self.rowByBaseName or self.rowByPID or self.rowByPIDLoose) then
+        return
+    end
 
     for i = 1, (self.maxPlates or 40) do
         local unit = "nameplate" .. tostring(i)
