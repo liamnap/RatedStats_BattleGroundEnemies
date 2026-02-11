@@ -533,15 +533,15 @@ local function SafeUnitClass(unit)
 end
 
 NormalizeFactionIndex = function(v)
-    if type(v) == "number" then
-        -- Blizzard BG faction index (commonly 0=Horde, 1=Alliance)
-        if v == 0 or v == 1 then return v end
-        return 0
-    end
-    if type(v) == "string" then
-        if v == "Alliance" then return 1 end
-        if v == "Horde" then return 0 end
-    end
+    -- 12.x secret values: never compare raw numeric values (they can be "secret").
+    -- Convert safely to string first, then parse/compare.
+    local s = SafeToString(v)
+    if type(s) ~= "string" then return 0 end
+
+    local n = tonumber(s)
+    if n == 0 or n == 1 then return n end
+    if s == "Alliance" then return 1 end
+    if s == "Horde" then return 0 end
     return 0
 end
 
@@ -1214,7 +1214,9 @@ function BGE:BuildRosterFromScoreboard()
             end
             if ok and type(info) == "table" then
                 local isFriendly = false
-                if myFactionIndex ~= nil and type(info.faction) == "number" and info.faction == myFactionIndex then
+                local myFI = NormalizeFactionIndex(myFactionIndex)
+                local fi   = NormalizeFactionIndex(info.faction)
+                if myFactionIndex ~= nil and fi == myFI then
                     isFriendly = true
                 end
 
