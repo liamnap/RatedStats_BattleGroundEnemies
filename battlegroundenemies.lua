@@ -932,8 +932,7 @@ local function SafePlateHealthNumericText(sb)
 
     local okT, t = pcall(fs.GetText, fs)
     if not okT or type(t) ~= "string" then return nil end
-    if _G.issecretvalue and _G.issecretvalue(t) then return nil end
-    if t == "" then return nil end
+
     return t
 end
 
