@@ -68,7 +68,7 @@ local RS_TEXT_R, RS_TEXT_G, RS_TEXT_B = 182/255, 158/255, 134/255
 local ROW_ALPHA_ACTIVE   = 1.0
 local ROW_ALPHA_OOR      = 0.55   -- out-of-range: noticeably dim
 local CLASS_ALPHA_ACTIVE = 1.00
-local CLASS_ALPHA_OOR    = 0.35   -- out-of-range: keep visible, just dim
+local CLASS_ALPHA_OOR    = 0.55   -- out-of-range: keep visible, just dim
 
 local function InLockdown()
     return _G.InCombatLockdown and _G.InCombatLockdown()
