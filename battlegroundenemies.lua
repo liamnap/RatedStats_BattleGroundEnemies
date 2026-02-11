@@ -3459,7 +3459,7 @@ function BGE:UpdateHealth(row, unit)
 
     local secretNums = false
     if self._mode ~= "arena" and IsNameplateUnit(readUnit) then
-+        cur, maxv, secretNums = SafePlateHealth(readUnit)
+        cur, maxv, secretNums = SafePlateHealth(readUnit)
     end
     if not cur or not maxv then
         cur, maxv = SafeUnitHealth(unit)
