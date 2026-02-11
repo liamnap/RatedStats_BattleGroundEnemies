@@ -68,7 +68,7 @@ local RS_TEXT_R, RS_TEXT_G, RS_TEXT_B = 182/255, 158/255, 134/255
 local ROW_ALPHA_ACTIVE   = 1.0
 local ROW_ALPHA_OOR      = 0.55   -- out-of-range: noticeably dim
 local CLASS_ALPHA_ACTIVE = 1.00
-local CLASS_ALPHA_OOR    = 0.35   -- out-of-range: keep visible, just dim
+local CLASS_ALPHA_OOR    = 0.55   -- out-of-range: keep visible, just dim
 
 local function InLockdown()
     return _G.InCombatLockdown and _G.InCombatLockdown()
@@ -303,7 +303,12 @@ end
 -- Scan current nameplates and bind GUID matches to seeded rows.
 function BGE:ScanNameplatesForGuidBindings()
     if self._mode == "arena" then return end
-    if not self.rowByGuid or not self.rowByUnit then return end
+    if not self.rowByUnit then return end
+    -- Allow scanning even when GUID map is unavailable (scoreboard locked / secret),
+    -- as long as we have *some* seeded map to bind against.
+    if not (self.rowByGuid or self.rowByFullName or self.rowByBaseName or self.rowByPID or self.rowByPIDLoose) then
+        return
+    end
 
     for i = 1, (self.maxPlates or 40) do
         local unit = "nameplate" .. tostring(i)
@@ -399,6 +404,26 @@ function BGE:ScanNameplatesForGuidBindings()
                 self:UpdatePower(row, unit)
             end
         end
+    end
+end
+
+-- On Engaged, do a fast pass to bind as many visible nameplates as possible to seeded rows.
+-- IMPORTANT: This does NOT touch the scoreboard (score APIs can be secret/blocked mid-match).
+function BGE:EngagedNameplateSweep()
+    if self._mode == "arena" then return end
+    if not IsInPVPInstance() then return end
+    if not self.rows or not self.rowByUnit then return end
+
+    -- 1) Bind immediately
+    self:ScanNameplatesForGuidBindings()
+
+    -- 2) One short follow-up to catch plates created a few frames after gates open
+    if C_Timer and C_Timer.After then
+        C_Timer.After(0.10, function()
+            local b = _G.RSTATS_BGE
+            if not b or not IsInPVPInstance() then return end
+            b:ScanNameplatesForGuidBindings()
+        end)
     end
 end
 
@@ -533,16 +558,16 @@ local function SafeUnitClass(unit)
 end
 
 NormalizeFactionIndex = function(v)
-    if type(v) == "number" then
-        -- Blizzard BG faction index (commonly 0=Horde, 1=Alliance)
-        if v == 0 or v == 1 then return v end
-        return 0
-    end
-    if type(v) == "string" then
-        if v == "Alliance" then return 1 end
-        if v == "Horde" then return 0 end
-    end
-    return 0
+    -- 12.x secret values: never compare raw numeric values (they can be "secret").
+    -- Convert safely to string first, then parse/compare.
+    local s = SafeToString(v)
+    if type(s) ~= "string" then return nil end
+
+    local n = tonumber(s)
+    if n == 0 or n == 1 then return n end
+    if s == "Alliance" then return 1 end
+    if s == "Horde" then return 0 end
+    return nil
 end
 
 CalculatePID = function(classID, factionIndex, honorLevel)
@@ -900,7 +925,10 @@ SafeStatusBarValues = function(sb)
     if not okV or type(v) ~= "number" then return nil, nil end
     local okMM, mn, mx = pcall(sb.GetMinMaxValues, sb)
     if not okMM or type(mx) ~= "number" then return nil, nil end
-    return v, mx
+    
+    local isSecretV = (_G.issecretvalue and _G.issecretvalue(v)) or false
+    local isSecretM = (_G.issecretvalue and _G.issecretvalue(mx)) or false
+    return v, mx, (isSecretV or isSecretM)
 end
 
 -- Derive an approximate percent from a StatusBar's fill texture width.
@@ -932,7 +960,7 @@ local function SafePlateHealthNumericText(sb)
 
     local okT, t = pcall(fs.GetText, fs)
     if not okT or type(t) ~= "string" then return nil end
-    if t == "" then return nil end
+
     return t
 end
 
@@ -995,7 +1023,7 @@ local function SafePlatePower(unit)
 
     for i = 1, #candidates do
         local sb = candidates[i]
-        local cur, maxv = SafeStatusBarValues(sb)
+        local cur, maxv, secret = SafeStatusBarValues(sb)
         if cur and maxv then
             local r, g, b = ColorFromBar(sb)
             return cur, maxv, r, g, b
@@ -1119,18 +1147,17 @@ function BGE:BuildRosterFromScoreboard()
     self._rosterOrderByKey = self._rosterOrderByKey or {}
 
     local function NormalizeRole(role)
-        if type(role) == "string" then
-            role = role:upper()
-            if role == "HEALER" or role == "DAMAGER" or role == "TANK" then
-                return role
+        local s = SafeToString(role)
+        if type(s) == "string" then
+            local up = s:upper()
+            if up == "HEALER" or up == "DAMAGER" or up == "TANK" then
+                return up
             end
-            return nil
-        end
-        if type(role) == "number" then
-            if role == 4 then return "HEALER" end
-            if role == 2 then return "TANK" end
-            if role == 1 or role == 8 then return "DAMAGER" end
-            return nil
+            
+            local n = tonumber(s)
+            if n == 4 then return "HEALER" end
+            if n == 2 then return "TANK" end
+            if n == 1 or n == 8 then return "DAMAGER" end
         end
         return nil
     end
@@ -1214,7 +1241,18 @@ function BGE:BuildRosterFromScoreboard()
             end
             if ok and type(info) == "table" then
                 local isFriendly = false
-                if myFactionIndex ~= nil and type(info.faction) == "number" and info.faction == myFactionIndex then
+                local myFI = NormalizeFactionIndex(myFactionIndex)
+                local fi   = NormalizeFactionIndex(info.faction)
+
+                -- If C_PvP.GetScoreInfo faction is secret/unreadable, use GetBattlefieldScore faction instead.
+                if (not fi) and _G.GetBattlefieldScore then
+                    local _, _, _, _, _, factionL = _G.GetBattlefieldScore(i)
+                    if factionL ~= nil then
+                        fi = NormalizeFactionIndex(factionL)
+                    end
+                end
+
+                if myFI and fi and fi == myFI then
                     isFriendly = true
                 end
 
@@ -1226,11 +1264,11 @@ function BGE:BuildRosterFromScoreboard()
                     local specID = SafeNonEmptyString(info.talentSpec)
                     local role = NormalizeRole(info.roleAssigned)
                     local raceName = SafeNonEmptyString(info.raceName)
-                    local honorLevel = tonumber(info.honorLevel) or 0
+                    local honorLevel = tonumber(SafeToString(info.honorLevel)) or 0
                     -- PVPScoreInfo does not include level/sex (12.x); don't pretend it does.
                     local level = 0
                     local sex = 0
-                    local factionIndex = NormalizeFactionIndex(info.faction)
+                    local factionIndex = fi or (NormalizeFactionIndex(info.faction)) or 0
 
                     -- If C_PvP.GetScoreInfo omitted/blocked fields, fall back to GetBattlefieldScore 
                     if (not full or not classToken) and _G.GetBattlefieldScore then
@@ -1239,7 +1277,7 @@ function BGE:BuildRosterFromScoreboard()
                         if not classToken then classToken = SafeNonEmptyString(classTokenL) end
                         if not raceName then raceName = SafeNonEmptyString(raceL) end
                         if not specID then specID = SafeNonEmptyString(specNameL) end
-                        if honorLevel == 0 and rankL then honorLevel = tonumber(rankL) or honorLevel end
+                        if honorLevel == 0 and rankL then honorLevel = tonumber(SafeToString(rankL)) or honorLevel end
                         if factionL ~= nil then factionIndex = NormalizeFactionIndex(factionL) end
                     end
 
@@ -2681,23 +2719,50 @@ function BGE:UpdateMatchState()
     if not inPvp then
         self._matchStarted = false
         self._oorEnabled = false
+        self._scoreLocked = false
+        self._seedPending = false
+        self:StopScoreWarmup()
         self.achievCache = nil -- reset per BG
         return
     end
 
+    local wasStarted = self._matchStarted and true or false
     self._matchStarted = self:IsMatchStarted()
     if self._matchStarted then
         self._oorEnabled = true
+        -- 12.0.1+: scoreboard player data can become secret during an active match.
+        -- Once Engaged, stop all scoreboard-driven seeding for this match.
+        if not wasStarted then
+            self._scoreLocked = true
+            self._seedPending = false
+            self:StopScoreWarmup()
+            -- Optional (but recommended): bind any already-visible nameplates to seeded rows.
+            if self.EngagedNameplateSweep then
+                self:EngagedNameplateSweep()
+            end
+        end
+    else
+        -- Pre-match: allow scoreboard seeding.
+        self._scoreLocked = false
     end
 end
 
 -- Schedule a reseed soon, but collapse bursts of score updates into one call.
 function BGE:ScheduleSeedFromScoreboard()
+    -- Once match is Engaged, scoreboard APIs may return secret/blocked fields; don't bother.
+    if self._scoreLocked or self:IsMatchStarted() then
+        self._scoreLocked = true
+        return
+    end
     if self._seedPending then return end
     self._seedPending = true
     C_Timer.After(0.5, function()
         self._seedPending = false
         if not IsInPVPInstance() or self._mode == "arena" or not GetSetting("bgeEnabled", true) then return end
+        if self._scoreLocked or self:IsMatchStarted() then
+            self._scoreLocked = true
+            return
+        end
         if _G.RequestBattlefieldScoreData then
             pcall(_G.RequestBattlefieldScoreData)
         end
@@ -2712,8 +2777,15 @@ function BGE:StartScoreWarmup()
     self._scoreWarmupStartedAt = GetTime()
     -- Long-lived keepalive: BGs can be joined late and score data can lag.
     -- Keep it LOW frequency to avoid combat hitching.
-    self._scoreWarmupTicker = C_Timer.NewTicker(5, function()
+    self._scoreWarmupTicker = C_Timer.NewTicker(0.5, function()
         if not IsInPVPInstance() or self._mode == "arena" or not GetSetting("bgeEnabled", true) then
+            self:StopScoreWarmup()
+            return
+        end
+
+        -- Stop warmup as soon as the match starts (scoreboard becomes unreliable/secret).
+        if self:IsMatchStarted() then
+            self._scoreLocked = true
             self:StopScoreWarmup()
             return
         end
@@ -2742,10 +2814,8 @@ function BGE:StartScoreWarmup()
             return
         end
 
-        -- If match started and we're in combat, don't hammer the scoreboard unless we still need resolution.
-        if self._matchStarted and self._seededThisBG and UnitAffectingCombat and UnitAffectingCombat("player") then
-            return
-        end
+        -- If we're in combat, don't hammer the scoreboard.
+        if UnitAffectingCombat and UnitAffectingCombat("player") then return end
 
         if _G.RequestBattlefieldScoreData then
             pcall(_G.RequestBattlefieldScoreData)
@@ -3240,7 +3310,7 @@ function BGE:ReleaseRow(row)
     row.role = nil
     row.specID = nil
     row._seeded = nil
---    row.hpText:SetText("")
+    pcall(row.hpText.SetText, row.hpText, "")
     row.nameText:SetText("")
     if row.roleIcon then row.roleIcon:Hide() end
     row.hp:SetMinMaxValues(0, 1)
@@ -3426,16 +3496,6 @@ function BGE:UpdateHealth(row, unit)
         return
     end
 
-    -- Cache invalidation: nameplate frames get recycled.
-    if row._barsUnit ~= unit then
-        row._barsUnit = unit
-        row._lastHpTextAt = nil
-        row._lastClipAt = nil
-        row._hpSB = nil
-        -- Important: don't carry old text across recycled frames/units.
---        row.hpText:SetText("")
-    end
-
     -- Prefer reading the nameplate StatusBar when we can (this is the "works in BGs" path).
     -- If the update came from raidXtarget/etc but we also have a bound nameplate unit, use that for health read.
     local readUnit = unit
@@ -3443,8 +3503,20 @@ function BGE:UpdateHealth(row, unit)
         readUnit = row.unit
     end
 
+    -- Cache invalidation: nameplate frames get recycled.
+    -- IMPORTANT: invalidate based on the unit we actually read bars from (readUnit), not the event token (unit).
+    if row._barsUnit ~= readUnit then
+        row._barsUnit = readUnit
+        row._lastHpTextAt = nil
+        row._lastClipAt = nil
+        row._hpSB = nil
+        -- Important: don't carry old text across recycled frames/units.
+        pcall(row.hpText.SetText, row.hpText, "")
+    end
+
+    local secretNums = false
     if self._mode ~= "arena" and IsNameplateUnit(readUnit) then
-        cur, maxv = SafePlateHealth(readUnit)
+        cur, maxv, secretNums = SafePlateHealth(readUnit)
     end
     if not cur or not maxv then
         cur, maxv = SafeUnitHealth(unit)
@@ -3462,6 +3534,7 @@ function BGE:UpdateHealth(row, unit)
     local lastT = row._lastHpTextAt or 0
     if (now - lastT) >= 0.50 then
         local txt
+        local hpTxtFromPlateNumeric = false
 
         -- Mode 3 ("%"): prefer UnitHealthPercent (0..100 via curve), else use nameplate fill geometry.
         if mode == 3 then
@@ -3524,20 +3597,106 @@ function BGE:UpdateHealth(row, unit)
 
             -- Last resort: legacy formatter (may fail on secrets; keep pcall).
             if txt == nil then
-                local okT, t = pcall(FormatHealthText, cur, maxv, mode)
-                if okT then txt = t end
+				-- If numbers are secret, do NOT format/compare them. Prefer display-only paths.
+				if secretNums then
+					-- 1) If we have nameplate numeric text, we already try it elsewhere.
+					-- 2) Otherwise fall back to fill-geometry percent (doesn't touch secret numbers).
+					if self._mode ~= "arena" and IsNameplateUnit(readUnit) then
+						local sb = row._hpSB
+						if sb and sb ~= false then
+							local pct = SafePercentFromStatusBarFill(sb)
+							if pct then txt = pct .. "%" end
+						end
+					end
+				end
+				if txt == nil then
+					local okT, t = pcall(FormatHealthText, cur, maxv, mode)
+					if okT then txt = t end
+				end
             end
         else
             -- Mode 1 ("Current") and Mode 2 ("Current/Total")
-            local okT, t = pcall(FormatHealthText, cur, maxv, mode)
-            if okT then txt = t end
+            -- On 12.0+/Midnight, UnitHealth/UnitHealthMax on enemies can be scrubbed/secret and look "wrong" or identical.
+            -- Prefer Blizzard's numeric nameplate text when available.
+            if self._mode ~= "arena" and IsNameplateUnit(readUnit) then
+                local sb = row._hpSB
+                if sb == nil then
+                    sb = FindPlateHealthStatusBar(readUnit)
+                    row._hpSB = sb or false
+                elseif sb == false then
+                    sb = nil
+                end
+                if sb then
+                    local s = SafePlateHealthNumericText(sb)
+                    if s then
+                        -- Try to display it right now. If this fails (secret string), fall back below.
+                        local okSet = pcall(row.hpText.SetText, row.hpText, s)
+                        if okSet then
+                            row._lastHpTextAt = now
+                            return
+                        end
+                    end
+                end
+            end
+
+            -- If numeric text couldn't be shown (often because it's secret), keep it dynamic via fill-geometry %.
+            if txt == nil and self._mode ~= "arena" and IsNameplateUnit(readUnit) then
+                local sb = row._hpSB
+                if sb and sb ~= false then
+                    local pct = SafePercentFromStatusBarFill(sb)
+                    if pct then txt = pct .. "%" end
+                end
+            end
+
+            if txt == nil then
+				-- If numbers are secret, do NOT format/compare them. Prefer display-only paths.
+				if secretNums then
+					-- 1) If we have nameplate numeric text, we already try it elsewhere.
+					-- 2) Otherwise fall back to fill-geometry percent (doesn't touch secret numbers).
+					if self._mode ~= "arena" and IsNameplateUnit(readUnit) then
+						local sb = row._hpSB
+						if sb and sb ~= false then
+							local pct = SafePercentFromStatusBarFill(sb)
+							if pct then txt = pct .. "%" end
+						end
+					end
+				end
+				if txt == nil then
+					local okT, t = pcall(FormatHealthText, cur, maxv, mode)
+					if okT then txt = t end
+				end
+            end
         end
 
         -- Don't clear on failure; keep last known text so it doesn't flicker/gap.
         if txt ~= nil then
             row._lastHpTextAt = now
             -- If txt is unusable, SetText will fail and we keep the old value.
-            pcall(row.hpText.SetText, row.hpText, txt)
+            local okSet = pcall(row.hpText.SetText, row.hpText, txt)
+            if not okSet and GetSetting("bgeDebug", false) then
+                self._dbgHpText = self._dbgHpText or { plateAttempt = 0, plateFail = 0, anyFail = 0 }
+                self._dbgHpText.anyFail = self._dbgHpText.anyFail + 1
+                if hpTxtFromPlateNumeric then
+                    self._dbgHpText.plateAttempt = self._dbgHpText.plateAttempt + 1
+                    self._dbgHpText.plateFail = self._dbgHpText.plateFail + 1
+                    DPrint("hptext_plate_set_fail",
+                        ("hpText:SetText(plateNumeric) FAIL  anyFail=%d  plateFail=%d/%d  readUnit=%s  guid=%s"):format(
+                            self._dbgHpText.anyFail,
+                            self._dbgHpText.plateFail,
+                            self._dbgHpText.plateAttempt,
+                            tostring(readUnit),
+                            tostring(row and row.guid)
+                        )
+                    )
+                else
+                    DPrint("hptext_set_fail", ("hpText:SetText FAIL  anyFail=%d  readUnit=%s  guid=%s"):format(
+                        self._dbgHpText.anyFail, tostring(readUnit), tostring(row and row.guid)
+                    ))
+                end
+            elseif hpTxtFromPlateNumeric and GetSetting("bgeDebug", false) then
+                self._dbgHpText = self._dbgHpText or { plateAttempt = 0, plateFail = 0, anyFail = 0 }
+                self._dbgHpText.plateAttempt = self._dbgHpText.plateAttempt + 1
+            end
         else
         end
     end
@@ -4876,6 +5035,11 @@ evt:SetScript("OnEvent", function(_, event, arg1)
     end
 
     if event == "UPDATE_BATTLEFIELD_SCORE" then
+        -- Once Engaged, scoreboard data may be secret; ignore score updates.
+        if BGE._scoreLocked or BGE:IsMatchStarted() then
+            BGE._scoreLocked = true
+            return
+        end
         BGE:ScheduleSeedFromScoreboard()
         return
     end
