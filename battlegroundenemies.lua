@@ -1119,18 +1119,17 @@ function BGE:BuildRosterFromScoreboard()
     self._rosterOrderByKey = self._rosterOrderByKey or {}
 
     local function NormalizeRole(role)
-        if type(role) == "string" then
-            role = role:upper()
-            if role == "HEALER" or role == "DAMAGER" or role == "TANK" then
-                return role
+        local s = SafeToString(role)
+        if type(s) == "string" then
+            local up = s:upper()
+            if up == "HEALER" or up == "DAMAGER" or up == "TANK" then
+                return up
             end
-            return nil
-        end
-        if type(role) == "number" then
-            if role == 4 then return "HEALER" end
-            if role == 2 then return "TANK" end
-            if role == 1 or role == 8 then return "DAMAGER" end
-            return nil
+            
+            local n = tonumber(s)
+            if n == 4 then return "HEALER" end
+            if n == 2 then return "TANK" end
+            if n == 1 or n == 8 then return "DAMAGER" end
         end
         return nil
     end
