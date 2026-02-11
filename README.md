@@ -72,6 +72,7 @@ Retail’s modern UI rules (secure templates, combat lockdown, “secret” valu
 - Some updates cannot happen while in combat (frame sizing/position changes may be blocked).
 - Some enemy/unit data is **not immediately available** at match start.
 - 12.0.1 released 11/02/2026 has locked down the scoreboard so **leavers and joiners** matching is no longer possible, mostly affecting normal game modes.
+- Joining **after a Battleground has begun** or having to **reload mid-game** will cause this to break, this is from Blizzard locking down the scoreboard in 12.0.1
 
 * * *
 
