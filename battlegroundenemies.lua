@@ -3253,7 +3253,7 @@ function BGE:ReleaseRow(row)
     row.role = nil
     row.specID = nil
     row._seeded = nil
---    row.hpText:SetText("")
+    pcall(row.hpText.SetText, row.hpText, "")
     row.nameText:SetText("")
     if row.roleIcon then row.roleIcon:Hide() end
     row.hp:SetMinMaxValues(0, 1)
@@ -3477,6 +3477,7 @@ function BGE:UpdateHealth(row, unit)
     local lastT = row._lastHpTextAt or 0
     if (now - lastT) >= 0.50 then
         local txt
+        local hpTxtFromPlateNumeric = false
 
         -- Mode 3 ("%"): prefer UnitHealthPercent (0..100 via curve), else use nameplate fill geometry.
         if mode == 3 then
@@ -3614,7 +3615,31 @@ function BGE:UpdateHealth(row, unit)
         if txt ~= nil then
             row._lastHpTextAt = now
             -- If txt is unusable, SetText will fail and we keep the old value.
-            pcall(row.hpText.SetText, row.hpText, txt)
+            local okSet = pcall(row.hpText.SetText, row.hpText, txt)
+            if not okSet and GetSetting("bgeDebug", false) then
+                self._dbgHpText = self._dbgHpText or { plateAttempt = 0, plateFail = 0, anyFail = 0 }
+                self._dbgHpText.anyFail = self._dbgHpText.anyFail + 1
+                if hpTxtFromPlateNumeric then
+                    self._dbgHpText.plateAttempt = self._dbgHpText.plateAttempt + 1
+                    self._dbgHpText.plateFail = self._dbgHpText.plateFail + 1
+                    DPrint("hptext_plate_set_fail",
+                        ("hpText:SetText(plateNumeric) FAIL  anyFail=%d  plateFail=%d/%d  readUnit=%s  guid=%s"):format(
+                            self._dbgHpText.anyFail,
+                            self._dbgHpText.plateFail,
+                            self._dbgHpText.plateAttempt,
+                            tostring(readUnit),
+                            tostring(row and row.guid)
+                        )
+                    )
+                else
+                    DPrint("hptext_set_fail", ("hpText:SetText FAIL  anyFail=%d  readUnit=%s  guid=%s"):format(
+                        self._dbgHpText.anyFail, tostring(readUnit), tostring(row and row.guid)
+                    ))
+                end
+            elseif hpTxtFromPlateNumeric and GetSetting("bgeDebug", false) then
+                self._dbgHpText = self._dbgHpText or { plateAttempt = 0, plateFail = 0, anyFail = 0 }
+                self._dbgHpText.plateAttempt = self._dbgHpText.plateAttempt + 1
+            end
         else
         end
     end
