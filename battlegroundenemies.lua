@@ -3451,7 +3451,7 @@ function BGE:UpdateHealth(row, unit)
         row._lastClipAt = nil
         row._hpSB = nil
         -- Important: don't carry old text across recycled frames/units.
---        row.hpText:SetText("")
+        pcall(row.hpText.SetText, row.hpText, "")
     end
 
     if self._mode ~= "arena" and IsNameplateUnit(readUnit) then
@@ -3552,9 +3552,26 @@ function BGE:UpdateHealth(row, unit)
                 end
                 if sb then
                     local s = SafePlateHealthNumericText(sb)
-                    if s then txt = s end
+                    if s then
+                        -- Try to display it right now. If this fails (secret string), fall back below.
+                        local okSet = pcall(row.hpText.SetText, row.hpText, s)
+                        if okSet then
+                            row._lastHpTextAt = now
+                            return
+                        end
+                    end
                 end
             end
+
+            -- If numeric text couldn't be shown (often because it's secret), keep it dynamic via fill-geometry %.
+            if txt == nil and self._mode ~= "arena" and IsNameplateUnit(readUnit) then
+                local sb = row._hpSB
+                if sb and sb ~= false then
+                    local pct = SafePercentFromStatusBarFill(sb)
+                    if pct then txt = pct .. "%" end
+                end
+            end
+
             if txt == nil then
                 local okT, t = pcall(FormatHealthText, cur, maxv, mode)
                 if okT then txt = t end
