@@ -3436,21 +3436,22 @@ function BGE:UpdateHealth(row, unit)
         return
     end
 
-    -- Cache invalidation: nameplate frames get recycled.
-    if row._barsUnit ~= unit then
-        row._barsUnit = unit
-        row._lastHpTextAt = nil
-        row._lastClipAt = nil
-        row._hpSB = nil
-        -- Important: don't carry old text across recycled frames/units.
---        row.hpText:SetText("")
-    end
-
     -- Prefer reading the nameplate StatusBar when we can (this is the "works in BGs" path).
     -- If the update came from raidXtarget/etc but we also have a bound nameplate unit, use that for health read.
     local readUnit = unit
     if self._mode ~= "arena" and row and row.unit and IsNameplateUnit(row.unit) and UnitExists(row.unit) then
         readUnit = row.unit
+    end
+
+    -- Cache invalidation: nameplate frames get recycled.
+    -- IMPORTANT: invalidate based on the unit we actually read bars from (readUnit), not the event token (unit).
+    if row._barsUnit ~= readUnit then
+        row._barsUnit = readUnit
+        row._lastHpTextAt = nil
+        row._lastClipAt = nil
+        row._hpSB = nil
+        -- Important: don't carry old text across recycled frames/units.
+--        row.hpText:SetText("")
     end
 
     if self._mode ~= "arena" and IsNameplateUnit(readUnit) then
@@ -3539,8 +3540,25 @@ function BGE:UpdateHealth(row, unit)
             end
         else
             -- Mode 1 ("Current") and Mode 2 ("Current/Total")
-            local okT, t = pcall(FormatHealthText, cur, maxv, mode)
-            if okT then txt = t end
+            -- On 12.0+/Midnight, UnitHealth/UnitHealthMax on enemies can be scrubbed/secret and look "wrong" or identical.
+            -- Prefer Blizzard's numeric nameplate text when available.
+            if self._mode ~= "arena" and IsNameplateUnit(readUnit) then
+                local sb = row._hpSB
+                if sb == nil then
+                    sb = FindPlateHealthStatusBar(readUnit)
+                    row._hpSB = sb or false
+                elseif sb == false then
+                    sb = nil
+                end
+                if sb then
+                    local s = SafePlateHealthNumericText(sb)
+                    if s then txt = s end
+                end
+            end
+            if txt == nil then
+                local okT, t = pcall(FormatHealthText, cur, maxv, mode)
+                if okT then txt = t end
+            end
         end
 
         -- Don't clear on failure; keep last known text so it doesn't flicker/gap.
