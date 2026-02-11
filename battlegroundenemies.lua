@@ -402,6 +402,26 @@ function BGE:ScanNameplatesForGuidBindings()
     end
 end
 
+-- On Engaged, do a fast pass to bind as many visible nameplates as possible to seeded rows.
+-- IMPORTANT: This does NOT touch the scoreboard (score APIs can be secret/blocked mid-match).
+function BGE:EngagedNameplateSweep()
+    if self._mode == "arena" then return end
+    if not IsInPVPInstance() then return end
+    if not self.rows or not self.rowByUnit then return end
+
+    -- 1) Bind immediately
+    self:ScanNameplatesForGuidBindings()
+
+    -- 2) One short follow-up to catch plates created a few frames after gates open
+    if C_Timer and C_Timer.After then
+        C_Timer.After(0.10, function()
+            local b = _G.RSTATS_BGE
+            if not b or not IsInPVPInstance() then return end
+            b:ScanNameplatesForGuidBindings()
+        end)
+    end
+end
+
 Scrub2 = function(...)
     -- IMPORTANT:
     -- scrubsecretvalues() replaces secret values with nil. That prevents errors,
@@ -2701,8 +2721,7 @@ function BGE:UpdateMatchState()
         return
     end
 
-    self._matchStarted = self:IsMatchStarted()
-    local wasStarted = self._matchStarted or false
+    local wasStarted = self._matchStarted and true or false
     self._matchStarted = self:IsMatchStarted()
     if self._matchStarted then
         self._oorEnabled = true
@@ -2712,6 +2731,10 @@ function BGE:UpdateMatchState()
             self._scoreLocked = true
             self._seedPending = false
             self:StopScoreWarmup()
+            -- Optional (but recommended): bind any already-visible nameplates to seeded rows.
+            if self.EngagedNameplateSweep then
+                self:EngagedNameplateSweep()
+            end
         end
     else
         -- Pre-match: allow scoreboard seeding.
