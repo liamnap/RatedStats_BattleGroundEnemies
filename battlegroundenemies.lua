@@ -900,7 +900,10 @@ SafeStatusBarValues = function(sb)
     if not okV or type(v) ~= "number" then return nil, nil end
     local okMM, mn, mx = pcall(sb.GetMinMaxValues, sb)
     if not okMM or type(mx) ~= "number" then return nil, nil end
-    return v, mx
+    
+    local isSecretV = (_G.issecretvalue and _G.issecretvalue(v)) or false
+    local isSecretM = (_G.issecretvalue and _G.issecretvalue(mx)) or false
+    return v, mx, (isSecretV or isSecretM)
 end
 
 -- Derive an approximate percent from a StatusBar's fill texture width.
@@ -995,7 +998,7 @@ local function SafePlatePower(unit)
 
     for i = 1, #candidates do
         local sb = candidates[i]
-        local cur, maxv = SafeStatusBarValues(sb)
+        local cur, maxv, secret = SafeStatusBarValues(sb)
         if cur and maxv then
             local r, g, b = ColorFromBar(sb)
             return cur, maxv, r, g, b
@@ -3454,8 +3457,9 @@ function BGE:UpdateHealth(row, unit)
         pcall(row.hpText.SetText, row.hpText, "")
     end
 
+    local secretNums = false
     if self._mode ~= "arena" and IsNameplateUnit(readUnit) then
-        cur, maxv = SafePlateHealth(readUnit)
++        cur, maxv, secretNums = SafePlateHealth(readUnit)
     end
     if not cur or not maxv then
         cur, maxv = SafeUnitHealth(unit)
@@ -3535,8 +3539,22 @@ function BGE:UpdateHealth(row, unit)
 
             -- Last resort: legacy formatter (may fail on secrets; keep pcall).
             if txt == nil then
-                local okT, t = pcall(FormatHealthText, cur, maxv, mode)
-                if okT then txt = t end
+				-- If numbers are secret, do NOT format/compare them. Prefer display-only paths.
+				if secretNums then
+					-- 1) If we have nameplate numeric text, we already try it elsewhere.
+					-- 2) Otherwise fall back to fill-geometry percent (doesn't touch secret numbers).
+					if self._mode ~= "arena" and IsNameplateUnit(readUnit) then
+						local sb = row._hpSB
+						if sb and sb ~= false then
+							local pct = SafePercentFromStatusBarFill(sb)
+							if pct then txt = pct .. "%" end
+						end
+					end
+				end
+				if txt == nil then
+					local okT, t = pcall(FormatHealthText, cur, maxv, mode)
+					if okT then txt = t end
+				end
             end
         else
             -- Mode 1 ("Current") and Mode 2 ("Current/Total")
@@ -3573,8 +3591,22 @@ function BGE:UpdateHealth(row, unit)
             end
 
             if txt == nil then
-                local okT, t = pcall(FormatHealthText, cur, maxv, mode)
-                if okT then txt = t end
+				-- If numbers are secret, do NOT format/compare them. Prefer display-only paths.
+				if secretNums then
+					-- 1) If we have nameplate numeric text, we already try it elsewhere.
+					-- 2) Otherwise fall back to fill-geometry percent (doesn't touch secret numbers).
+					if self._mode ~= "arena" and IsNameplateUnit(readUnit) then
+						local sb = row._hpSB
+						if sb and sb ~= false then
+							local pct = SafePercentFromStatusBarFill(sb)
+							if pct then txt = pct .. "%" end
+						end
+					end
+				end
+				if txt == nil then
+					local okT, t = pcall(FormatHealthText, cur, maxv, mode)
+					if okT then txt = t end
+				end
             end
         end
 
