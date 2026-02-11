@@ -536,13 +536,13 @@ NormalizeFactionIndex = function(v)
     -- 12.x secret values: never compare raw numeric values (they can be "secret").
     -- Convert safely to string first, then parse/compare.
     local s = SafeToString(v)
-    if type(s) ~= "string" then return 0 end
+    if type(s) ~= "string" then return nil end
 
     local n = tonumber(s)
     if n == 0 or n == 1 then return n end
     if s == "Alliance" then return 1 end
     if s == "Horde" then return 0 end
-    return 0
+    return nil
 end
 
 CalculatePID = function(classID, factionIndex, honorLevel)
@@ -1216,7 +1216,16 @@ function BGE:BuildRosterFromScoreboard()
                 local isFriendly = false
                 local myFI = NormalizeFactionIndex(myFactionIndex)
                 local fi   = NormalizeFactionIndex(info.faction)
-                if myFI ~= nil and fi ~= nil and fi == myFI then
+
+                -- If C_PvP.GetScoreInfo faction is secret/unreadable, use GetBattlefieldScore faction instead.
+                if (not fi) and _G.GetBattlefieldScore then
+                    local _, _, _, _, _, factionL = _G.GetBattlefieldScore(i)
+                    if factionL ~= nil then
+                        fi = NormalizeFactionIndex(factionL)
+                    end
+                end
+
+                if myFI and fi and fi == myFI then
                     isFriendly = true
                 end
 
@@ -1232,7 +1241,7 @@ function BGE:BuildRosterFromScoreboard()
                     -- PVPScoreInfo does not include level/sex (12.x); don't pretend it does.
                     local level = 0
                     local sex = 0
-                    local factionIndex = NormalizeFactionIndex(info.faction)
+                    local factionIndex = fi or (NormalizeFactionIndex(info.faction)) or 0
 
                     -- If C_PvP.GetScoreInfo omitted/blocked fields, fall back to GetBattlefieldScore 
                     if (not full or not classToken) and _G.GetBattlefieldScore then
