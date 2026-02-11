@@ -1236,7 +1236,7 @@ function BGE:BuildRosterFromScoreboard()
                     local specID = SafeNonEmptyString(info.talentSpec)
                     local role = NormalizeRole(info.roleAssigned)
                     local raceName = SafeNonEmptyString(info.raceName)
-                    local honorLevel = tonumber(info.honorLevel) or 0
+                    local honorLevel = tonumber(SafeToString(info.honorLevel)) or 0
                     -- PVPScoreInfo does not include level/sex (12.x); don't pretend it does.
                     local level = 0
                     local sex = 0
@@ -1249,7 +1249,7 @@ function BGE:BuildRosterFromScoreboard()
                         if not classToken then classToken = SafeNonEmptyString(classTokenL) end
                         if not raceName then raceName = SafeNonEmptyString(raceL) end
                         if not specID then specID = SafeNonEmptyString(specNameL) end
-                        if honorLevel == 0 and rankL then honorLevel = tonumber(rankL) or honorLevel end
+                        if honorLevel == 0 and rankL then honorLevel = tonumber(SafeToString(rankL)) or honorLevel end
                         if factionL ~= nil then factionIndex = NormalizeFactionIndex(factionL) end
                     end
 
