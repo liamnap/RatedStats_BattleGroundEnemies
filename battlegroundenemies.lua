@@ -1216,7 +1216,7 @@ function BGE:BuildRosterFromScoreboard()
                 local isFriendly = false
                 local myFI = NormalizeFactionIndex(myFactionIndex)
                 local fi   = NormalizeFactionIndex(info.faction)
-                if myFactionIndex ~= nil and fi == myFI then
+                if myFI ~= nil and fi ~= nil and fi == myFI then
                     isFriendly = true
                 end
 
