@@ -2694,23 +2694,47 @@ function BGE:UpdateMatchState()
     if not inPvp then
         self._matchStarted = false
         self._oorEnabled = false
+        self._scoreLocked = false
+        self._seedPending = false
+        self:StopScoreWarmup()
         self.achievCache = nil -- reset per BG
         return
     end
 
     self._matchStarted = self:IsMatchStarted()
+    local wasStarted = self._matchStarted or false
+    self._matchStarted = self:IsMatchStarted()
     if self._matchStarted then
         self._oorEnabled = true
+        -- 12.0.1+: scoreboard player data can become secret during an active match.
+        -- Once Engaged, stop all scoreboard-driven seeding for this match.
+        if not wasStarted then
+            self._scoreLocked = true
+            self._seedPending = false
+            self:StopScoreWarmup()
+        end
+    else
+        -- Pre-match: allow scoreboard seeding.
+        self._scoreLocked = false
     end
 end
 
 -- Schedule a reseed soon, but collapse bursts of score updates into one call.
 function BGE:ScheduleSeedFromScoreboard()
+    -- Once match is Engaged, scoreboard APIs may return secret/blocked fields; don't bother.
+    if self._scoreLocked or self:IsMatchStarted() then
+        self._scoreLocked = true
+        return
+    end
     if self._seedPending then return end
     self._seedPending = true
     C_Timer.After(0.5, function()
         self._seedPending = false
         if not IsInPVPInstance() or self._mode == "arena" or not GetSetting("bgeEnabled", true) then return end
+        if self._scoreLocked or self:IsMatchStarted() then
+            self._scoreLocked = true
+            return
+        end
         if _G.RequestBattlefieldScoreData then
             pcall(_G.RequestBattlefieldScoreData)
         end
@@ -2725,8 +2749,15 @@ function BGE:StartScoreWarmup()
     self._scoreWarmupStartedAt = GetTime()
     -- Long-lived keepalive: BGs can be joined late and score data can lag.
     -- Keep it LOW frequency to avoid combat hitching.
-    self._scoreWarmupTicker = C_Timer.NewTicker(5, function()
+    self._scoreWarmupTicker = C_Timer.NewTicker(0.5, function()
         if not IsInPVPInstance() or self._mode == "arena" or not GetSetting("bgeEnabled", true) then
+            self:StopScoreWarmup()
+            return
+        end
+
+        -- Stop warmup as soon as the match starts (scoreboard becomes unreliable/secret).
+        if self:IsMatchStarted() then
+            self._scoreLocked = true
             self:StopScoreWarmup()
             return
         end
@@ -2755,10 +2786,8 @@ function BGE:StartScoreWarmup()
             return
         end
 
-        -- If match started and we're in combat, don't hammer the scoreboard unless we still need resolution.
-        if self._matchStarted and self._seededThisBG and UnitAffectingCombat and UnitAffectingCombat("player") then
-            return
-        end
+        -- If we're in combat, don't hammer the scoreboard.
+        if UnitAffectingCombat and UnitAffectingCombat("player") then return end
 
         if _G.RequestBattlefieldScoreData then
             pcall(_G.RequestBattlefieldScoreData)
@@ -4978,6 +5007,11 @@ evt:SetScript("OnEvent", function(_, event, arg1)
     end
 
     if event == "UPDATE_BATTLEFIELD_SCORE" then
+        -- Once Engaged, scoreboard data may be secret; ignore score updates.
+        if BGE._scoreLocked or BGE:IsMatchStarted() then
+            BGE._scoreLocked = true
+            return
+        end
         BGE:ScheduleSeedFromScoreboard()
         return
     end
