@@ -185,17 +185,19 @@ if ! git merge --no-ff "${dev_branch}" -m "${merge_msg}"; then
 
     # Always trust dev branch versions
     git checkout --theirs .gitattributes 2>/dev/null || true
-    git checkout --theirs .gitignore 2>/dev/null || true
-    git checkout --theirs .vscode 2>/dev/null || true
+    git checkout --theirs .vscode/* 2>/dev/null || true
     git checkout --theirs RatedStats_BattlegroundEnemies.toc 2>/dev/null || true
 
+    # Stage the resolutions (THIS is what clears the conflict state)
+    git add .gitattributes 2>/dev/null || true
+    git add -f .vscode/RatedStats_BattlegroundEnemies.code-workspace 2>/dev/null || true
+    git add RatedStats_BattlegroundEnemies.toc 2>/dev/null || true
+
     # Verify conflicts resolved
-    if git ls-files -u | grep -q .; then
+    if git diff --name-only --diff-filter=U | grep -q .; then
         echo "ERROR: Unresolved conflicts remain."
         exit 1
     fi
-
-    git add -A
     git commit --no-edit
 fi
 
