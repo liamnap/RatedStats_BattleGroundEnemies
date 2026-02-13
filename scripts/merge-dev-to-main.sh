@@ -15,7 +15,7 @@ confirm_env="${RS_CONFIRM_SPAM:-}"
 
 orig_branch="$(git rev-parse --abbrev-ref HEAD)"
 
-echo "== RatedStats_BattlegroundEnemies: Promote ${dev_branch} -> ${main_branch} (lua/toc only; tag main) =="
+echo "== RatedStats_BattlegroundEnemies: Promote ${dev_branch} -> ${main_branch} (full merge; stamp TOC; tag main) =="
 
 if [[ -n "$(git status --porcelain)" ]]; then
   echo "ERROR: Working tree is dirty. Commit/stash first."
@@ -148,6 +148,10 @@ git checkout -q "${main_branch}"
 tag="$(next_main_tag)"
 echo "Next main tag: ${tag}"
 
+# Detect files by what git actually tracks (avoids hardcoding + case issues on Windows).
+toc_file="$(git ls-files '*.toc' | head -n 1 || true)"
+ws_file="$(git ls-files '.vscode/*.code-workspace' | head -n 1 || true)"
+
 merge_msg="Release ${tag}"
 echo "Merge message (enter to accept default): ${merge_msg}"
 read -r user_msg || true
@@ -158,22 +162,46 @@ fi
 if ! git merge --no-ff "${dev_branch}" -m "${merge_msg}"; then
     echo "Merge conflict detected. Attempting auto-resolution for known safe files..."
 
-    # Always trust dev branch versions
-    git checkout --theirs .gitattributes 2>/dev/null || true
-    git checkout --theirs .vscode/* 2>/dev/null || true
-    git checkout --theirs RatedStats_BattlegroundEnemies.toc 2>/dev/null || true
+    # Always trust dev versions for these "safe" files.
+    git checkout --theirs -- .gitattributes 2>/dev/null || true
+    git checkout --theirs -- .gitignore 2>/dev/null || true
+    [[ -n "${ws_file}" ]] && git checkout --theirs -- "${ws_file}" 2>/dev/null || true
+    [[ -n "${toc_file}" ]] && git checkout --theirs -- "${toc_file}" 2>/dev/null || true
 
-    # Stage the resolutions (THIS is what clears the conflict state)
-    git add .gitattributes 2>/dev/null || true
-    git add -f .vscode/RatedStats_BattlegroundEnemies.code-workspace 2>/dev/null || true
-    git add RatedStats_BattlegroundEnemies.toc 2>/dev/null || true
+    # Stage the resolutions (this clears the conflict state)
+    git add -- .gitattributes 2>/dev/null || true
+    git add -- .gitignore 2>/dev/null || true
+    [[ -n "${ws_file}" ]] && git add -f -- "${ws_file}" 2>/dev/null || true
+    [[ -n "${toc_file}" ]] && git add -- "${toc_file}" 2>/dev/null || true
 
-    # Verify conflicts resolved
     if git diff --name-only --diff-filter=U | grep -q .; then
-        echo "ERROR: Unresolved conflicts remain."
+        echo "ERROR: Unresolved conflicts remain:"
+        git diff --name-only --diff-filter=U
         exit 1
     fi
+
     git commit --no-edit
+fi
+
+# Stamp the release version into the TOC so in-game version == git tag == GitHub release.
+if [[ -n "${toc_file}" && -f "${toc_file}" ]]; then
+  if grep -qE '^##[[:space:]]*Version:' "${toc_file}"; then
+    if command -v perl >/dev/null 2>&1; then
+      perl -pi -e "s/^##\\s*Version:\\s*.*\$/## Version: ${tag}/m" "${toc_file}"
+    else
+      sed -i "s/^##[[:space:]]*Version:.*$/## Version: ${tag}/" "${toc_file}"
+    fi
+  else
+    { echo "## Version: ${tag}"; cat "${toc_file}"; } > "${toc_file}.tmp" && mv "${toc_file}.tmp" "${toc_file}"
+  fi
+  git add -- "${toc_file}"
+else
+  echo "WARN: No .toc file detected; skipping TOC version stamp."
+fi
+
+# Commit the TOC stamp (so the tag points to a commit that actually contains the right in-game version).
+if ! git diff --cached --quiet; then
+  git commit -m "${merge_msg}"
 fi
 
 echo
