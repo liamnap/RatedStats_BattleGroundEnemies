@@ -225,7 +225,7 @@ echo "[8/8] Creating GitHub release..."
 
 if command -v gh >/dev/null 2>&1; then
   gh release create "${tag}" \
-    --title "${tag}" \
+    --title "RatedStats_BattlegroundEnemies ${tag}" \
     --notes "RatedStats BGE release ${tag}" \
     --target "${main_branch}"
 else
