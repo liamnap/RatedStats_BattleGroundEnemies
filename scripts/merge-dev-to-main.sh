@@ -176,6 +176,28 @@ if ! git merge --no-ff "${dev_branch}" -m "${merge_msg}"; then
     git commit --no-edit
 fi
 
+# Stamp the release version into the root TOC so in-game version matches the git tag.
+if [[ -f "RatedStats_BattlegroundEnemies.toc" ]]; then
+  if grep -qE '^##[[:space:]]*Version:' "RatedStats_BattlegroundEnemies.toc"; then
+    if command -v perl >/dev/null 2>&1; then
+      perl -pi -e "s/^##\\s*Version:\\s*.*\$/## Version: ${tag}/m" "RatedStats_BattlegroundEnemies.toc"
+    else
+      sed -i "s/^##[[:space:]]*Version:.*$/## Version: ${tag}/" "RatedStats_BattlegroundEnemies.toc"
+    fi
+  else
+    { echo "## Version: ${tag}"; cat "RatedStats_BattlegroundEnemies.toc"; } > "RatedStats_BattlegroundEnemies.toc.tmp" && mv "RatedStats_BattlegroundEnemies.toc.tmp" "RatedStats_BattlegroundEnemies.toc"
+  fi
+  git add -- "RatedStats_BattlegroundEnemies.toc"
+else
+  echo "WARN: RatedStats_BattlegroundEnemies.toc not found; skipping TOC version stamp."
+fi
+
+if git diff --cached --quiet; then
+  echo "Nothing staged after promotion. Exiting."
+  git checkout -q "${orig_branch}"
+  exit 0
+fi
+
 echo
 echo "[6/8] Tagging main with next version (based on latest main tag)..."
 echo "Tagging main: ${tag}"
