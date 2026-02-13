@@ -15,7 +15,7 @@ confirm_env="${RS_CONFIRM_SPAM:-}"
 
 orig_branch="$(git rev-parse --abbrev-ref HEAD)"
 
-echo "== RatedStats_BattleGroundEnemies: Promote ${dev_branch} -> ${main_branch} (lua/toc only; tag main) =="
+echo "== RatedStats_BattlegroundEnemies: Promote ${dev_branch} -> ${main_branch} (lua/toc only; tag main) =="
 
 if [[ -n "$(git status --porcelain)" ]]; then
   echo "ERROR: Working tree is dirty. Commit/stash first."
@@ -93,31 +93,6 @@ fi
 echo "Changed files (${#changed[@]}):"
 printf ' - %s\n' "${changed[@]}"
 
-allowed=()
-disallowed=()
-for f in "${changed[@]}"; do
-  if [[ "$f" == *.toc ]]; then
-    allowed+=("$f")
-  elif [[ "$f" == *.lua ]]; then
-    allowed+=("$f")
-  else
-    disallowed+=("$f")
-  fi
-done
-
-echo
-echo "Selective merge policy:"
-echo " - Allowed: *.lua and *.toc"
-if [[ ${#allowed[@]} -eq 0 ]]; then
-  echo "Nothing allowed to merge (only non-Lua/non-TOC changes). Aborting."
-  git checkout -q "${orig_branch}"
-  exit 0
-fi
-if [[ ${#disallowed[@]} -gt 0 ]]; then
-  echo " - Disallowed (will remain as main's version):"
-  printf '   - %s\n' "${disallowed[@]}"
-fi
-
 echo
 echo "[4/8] Spam scan (prints/chat/event/ticker/onupdate)..."
 
@@ -144,7 +119,7 @@ scan_file() {
   fi
 }
 
-for f in "${allowed[@]}"; do
+for f in "${changed[@]}"; do
   scan_file "$f"
 done
 
