@@ -1,6 +1,7 @@
 # Ignore GitHub Actions and project settings
 .github/
 .vscode/
+scripts/
 
 # Ignore log files
 *.log
