@@ -15,7 +15,7 @@ confirm_env="${RS_CONFIRM_SPAM:-}"
 
 orig_branch="$(git rev-parse --abbrev-ref HEAD)"
 
-echo "== RatedStats: Promote ${dev_branch} -> ${main_branch} (lua/toc only; tag main) =="
+echo "== RatedStats_BattleGroundEnemies: Promote ${dev_branch} -> ${main_branch} (lua/toc only; tag main) =="
 
 if [[ -n "$(git status --porcelain)" ]]; then
   echo "ERROR: Working tree is dirty. Commit/stash first."
@@ -180,17 +180,23 @@ if [[ -n "${user_msg}" ]]; then
   merge_msg="${user_msg}"
 fi
 
-git merge --no-ff "${dev_branch}" -m "${merge_msg}"
+if ! git merge --no-ff "${dev_branch}" -m "${merge_msg}"; then
+    echo "Merge conflict detected. Attempting auto-resolution for known safe files..."
 
-if git ls-files -u | grep -q .; then
-  echo "Merge conflict detected. Attempting auto-resolution for known safe files..."
+    # Always trust dev branch versions
+    git checkout --theirs .gitattributes 2>/dev/null || true
+    git checkout --theirs .gitignore 2>/dev/null || true
+    git checkout --theirs .vscode 2>/dev/null || true
+    git checkout --theirs RatedStats_BattlegroundEnemies.toc 2>/dev/null || true
 
-  git checkout --theirs .gitattributes 2>/dev/null || true
-  git checkout --theirs .vscode 2>/dev/null || true
-  git checkout --theirs RatedStats_BattleGroundEnemies.toc 2>/dev/null || true
+    # Verify conflicts resolved
+    if git ls-files -u | grep -q .; then
+        echo "ERROR: Unresolved conflicts remain."
+        exit 1
+    fi
 
-  git add -A
-  git commit --no-edit || true
+    git add -A
+    git commit --no-edit
 fi
 
 echo
