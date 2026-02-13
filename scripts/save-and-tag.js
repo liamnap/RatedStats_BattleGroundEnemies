@@ -1,6 +1,7 @@
 // save-and-tag.js
 const { execSync, execFileSync } = require('child_process');
 const fs = require('fs');
+const path = require('path');
 
 const fileChanged = process.argv[2];
 if (!fileChanged) {
@@ -72,6 +73,28 @@ function promptForMessage() {
     }
 }
 
+function updateTocVersion(version) {
+    const files = fs.readdirSync(process.cwd());
+    const tocFiles = files.filter(f => f.toLowerCase().endsWith('.toc'));
+    if (tocFiles.length === 0) {
+        console.error("No .toc file found in repo root. Aborting.");
+        process.exit(1);
+    }
+
+    // Repo root TOC (there should only be one)
+    const tocPath = path.join(process.cwd(), tocFiles[0]);
+    let content = fs.readFileSync(tocPath, 'utf8');
+
+    if (/^##\s*Version:/m.test(content)) {
+        content = content.replace(/^##\s*Version:\s*.*$/m, `## Version: ${version}`);
+    } else {
+        content = `## Version: ${version}\n` + content;
+    }
+
+    fs.writeFileSync(tocPath, content, 'utf8');
+    console.log(`Updated TOC version: ${tocFiles[0]} -> ${version}`);
+}
+
 function commitAndTag(version, message, file) {
     if (!message) {
         console.log('No commit message entered. Aborting.');
@@ -85,6 +108,8 @@ function commitAndTag(version, message, file) {
 
     try {
         console.log("Adding file to Git:", file.replace(/\\/g, "/"));
+        // Ensure in-game version matches the beta tag on dev
+        updateTocVersion(version);
         execSync(`git add .`);
         execSync(`git commit -m "${message}"`);
         execSync(`git tag ${version}`);
