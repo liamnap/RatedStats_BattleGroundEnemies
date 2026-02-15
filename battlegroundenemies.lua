@@ -1154,10 +1154,40 @@ function BGE:BuildRosterFromScoreboard()
                 return up
             end
             
+            -- roleAssigned behaves like a flag in many places:
+            -- 1=TANK, 2=DAMAGER, 4=HEALER (and sometimes combinations).
             local n = tonumber(s)
-            if n == 4 then return "HEALER" end
-            if n == 2 then return "TANK" end
-            if n == 1 or n == 8 then return "DAMAGER" end
+            local band = (_G.bit and _G.bit.band) or (_G.bit32 and _G.bit32.band)
+            if band and type(n) == "number" then
+                if band(n, 4) ~= 0 then return "HEALER" end
+                if band(n, 1) ~= 0 then return "TANK" end
+                if band(n, 2) ~= 0 then return "DAMAGER" end
+            elseif type(n) == "number" then
+                if n == 4 then return "HEALER" end
+                if n == 1 then return "TANK" end
+                if n == 2 then return "DAMAGER" end
+            end
+        end
+        return nil
+    end
+
+    -- NPC / Training Grounds: roleAssigned can be useless (e.g. always 2).
+    -- We have spec name strings in info.talentSpec / GetBattlefieldScore specNameL.
+    -- Resolve the role by matching spec name for the class, using Blizzard APIs.
+    local function ResolveRoleFromSpecName(classID, specName)
+        if type(classID) ~= "number" or classID <= 0 then return nil end
+        if type(specName) ~= "string" or specName == "" then return nil end
+        if not _G.C_SpecializationInfo or not _G.C_SpecializationInfo.GetNumSpecializationsForClassID then return nil end
+        if not _G.GetSpecializationInfoForClassID then return nil end
+
+        local okN, count = pcall(_G.C_SpecializationInfo.GetNumSpecializationsForClassID, classID)
+        if not okN or type(count) ~= "number" or count <= 0 then return nil end
+
+        for idx = 1, count do
+            local okI, _, name, _, _, role = pcall(_G.GetSpecializationInfoForClassID, classID, idx)
+            if okI and name == specName and type(role) == "string" and role ~= "" then
+                return NormalizeRole(role)
+            end
         end
         return nil
     end
@@ -1262,7 +1292,8 @@ function BGE:BuildRosterFromScoreboard()
                     local classToken = SafeNonEmptyString(info.classToken)
                     -- talentSpec is often a string; keep it for display if you want.
                     local specID = SafeNonEmptyString(info.talentSpec)
-                    local role = NormalizeRole(info.roleAssigned)
+                    local roleAssignedRaw = info.roleAssigned
+                    local role = NormalizeRole(roleAssignedRaw)
                     local raceName = SafeNonEmptyString(info.raceName)
                     local honorLevel = tonumber(SafeToString(info.honorLevel)) or 0
                     -- PVPScoreInfo does not include level/sex (12.x); don't pretend it does.
@@ -1283,8 +1314,12 @@ function BGE:BuildRosterFromScoreboard()
 
                     local classID = (classToken and self.ClassTokenToID and self.ClassTokenToID[classToken]) or 0
                     local raceID = (raceName and self.RaceNameToID and self.RaceNameToID[raceName]) or 0
-                    -- Fallback: derive role from specID if roleAssigned wasn't usable.
-                    if not role then
+                    -- Prefer spec-name derived role when available (Training Grounds NPCs often lie with roleAssigned).
+                    local specRole = ResolveRoleFromSpecName(classID, specID)
+                    if specRole then
+                        role = specRole
+                    elseif not role then
+                        -- Keep existing numeric specID fallback if specID is actually a specID number.
                         local sid = tonumber(specID)
                         if sid and _G.GetSpecializationRoleByID then
                             local okR, r = pcall(_G.GetSpecializationRoleByID, sid)
