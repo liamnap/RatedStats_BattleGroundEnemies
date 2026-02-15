@@ -1154,10 +1154,40 @@ function BGE:BuildRosterFromScoreboard()
                 return up
             end
             
+            -- roleAssigned behaves like a flag in many places:
+            -- 1=TANK, 2=DAMAGER, 4=HEALER (and sometimes combinations).
             local n = tonumber(s)
-            if n == 4 then return "HEALER" end
-            if n == 2 then return "TANK" end
-            if n == 1 or n == 8 then return "DAMAGER" end
+            local band = (_G.bit and _G.bit.band) or (_G.bit32 and _G.bit32.band)
+            if band and type(n) == "number" then
+                if band(n, 4) ~= 0 then return "HEALER" end
+                if band(n, 1) ~= 0 then return "TANK" end
+                if band(n, 2) ~= 0 then return "DAMAGER" end
+            elseif type(n) == "number" then
+                if n == 4 then return "HEALER" end
+                if n == 1 then return "TANK" end
+                if n == 2 then return "DAMAGER" end
+            end
+        end
+        return nil
+    end
+
+    -- NPC / Training Grounds: roleAssigned can be useless (e.g. always 2).
+    -- We have spec name strings in info.talentSpec / GetBattlefieldScore specNameL.
+    -- Resolve the role by matching spec name for the class, using Blizzard APIs.
+    local function ResolveRoleFromSpecName(classID, specName)
+        if type(classID) ~= "number" or classID <= 0 then return nil end
+        if type(specName) ~= "string" or specName == "" then return nil end
+        if not _G.C_SpecializationInfo or not _G.C_SpecializationInfo.GetNumSpecializationsForClassID then return nil end
+        if not _G.GetSpecializationInfoForClassID then return nil end
+
+        local okN, count = pcall(_G.C_SpecializationInfo.GetNumSpecializationsForClassID, classID)
+        if not okN or type(count) ~= "number" or count <= 0 then return nil end
+
+        for idx = 1, count do
+            local okI, _, name, _, _, role = pcall(_G.GetSpecializationInfoForClassID, classID, idx)
+            if okI and name == specName and type(role) == "string" and role ~= "" then
+                return NormalizeRole(role)
+            end
         end
         return nil
     end
@@ -1262,7 +1292,8 @@ function BGE:BuildRosterFromScoreboard()
                     local classToken = SafeNonEmptyString(info.classToken)
                     -- talentSpec is often a string; keep it for display if you want.
                     local specID = SafeNonEmptyString(info.talentSpec)
-                    local role = NormalizeRole(info.roleAssigned)
+                    local roleAssignedRaw = info.roleAssigned
+                    local role = NormalizeRole(roleAssignedRaw)
                     local raceName = SafeNonEmptyString(info.raceName)
                     local honorLevel = tonumber(SafeToString(info.honorLevel)) or 0
                     -- PVPScoreInfo does not include level/sex (12.x); don't pretend it does.
@@ -1283,8 +1314,12 @@ function BGE:BuildRosterFromScoreboard()
 
                     local classID = (classToken and self.ClassTokenToID and self.ClassTokenToID[classToken]) or 0
                     local raceID = (raceName and self.RaceNameToID and self.RaceNameToID[raceName]) or 0
-                    -- Fallback: derive role from specID if roleAssigned wasn't usable.
-                    if not role then
+                    -- Prefer spec-name derived role when available (Training Grounds NPCs often lie with roleAssigned).
+                    local specRole = ResolveRoleFromSpecName(classID, specID)
+                    if specRole then
+                        role = specRole
+                    elseif not role then
+                        -- Keep existing numeric specID fallback if specID is actually a specID number.
                         local sid = tonumber(specID)
                         if sid and _G.GetSpecializationRoleByID then
                             local okR, r = pcall(_G.GetSpecializationRoleByID, sid)
@@ -1328,6 +1363,7 @@ function BGE:BuildRosterFromScoreboard()
                             classToken = classToken,
                             specID = specID,
                             role = role,
+                            roleAssignedRaw = info.roleAssigned,
                             raceName = raceName,
                             raceID = raceID,
                             classID = classID,
@@ -2334,6 +2370,20 @@ function BGE:SeedRowsFromScoreboard()
         -- If we guess 10 too early in a 15v15, we permanently stop at 10.
         local expected = self._expectedBGTeamSize
         if not expected then
+            -- Solo RBG / Blitz are 8v8. Treat these as 8 explicitly.
+            local isSoloRBG = false
+            if C_PvP and C_PvP.IsRatedSoloRBG then
+                local ok, v = pcall(C_PvP.IsRatedSoloRBG)
+                if ok and v then isSoloRBG = true end
+            end
+            if (not isSoloRBG) and C_PvP and C_PvP.IsSoloRBG then
+                local ok, v = pcall(C_PvP.IsSoloRBG)
+                if ok and v then isSoloRBG = true end
+            end
+            if isSoloRBG then
+                expected = 8
+            end
+
             local mapID = nil
             if C_Map and C_Map.GetBestMapForUnit then
                 local okM, mid = pcall(C_Map.GetBestMapForUnit, "player")
@@ -2362,8 +2412,8 @@ function BGE:SeedRowsFromScoreboard()
             elseif maxPlayers and maxPlayers == 10 then
                 expected = 10
             -- Fallback only if maxPlayers not resolved:
-            elseif mapID == 1366 or mapID == 112 or mapID == 968 then
-                expected = 15
+            elseif maxPlayers and maxPlayers == 8 then
+                expected = 8
             end
 
             -- Fallback: infer from scoreboard total once it has populated.
@@ -2374,11 +2424,14 @@ function BGE:SeedRowsFromScoreboard()
                 local okT, total = pcall(_G.GetNumBattlefieldScores)
                 total = (okT and type(total) == "number") and total or 0
 
-                if total >= 60 then
+                if total >= 41 then
                     expected = 40
-                elseif total >= 26 then
+                elseif total >= 21 then
                     expected = 15
-                elseif age >= 25 and rosterN >= 10 then
+                elseif total <= 16 then
+                    -- 8v8 (both teams) once the scoreboard has actually populated
+                    expected = 8
+                elseif age >= 90 and rosterN >= 10 then
                     -- Only decide 10v10 once we've had time for the scoreboard to fill.
                     expected = 10
                 end
@@ -2614,7 +2667,12 @@ function BGE:SeedRowsFromScoreboard()
             -- PID map (unique-only)
             local pid = CalculatePIDFull(row.raceID, row.classID, row.level, row.faction, row.sex, row.honorLevel)
             row.pid = pid
-            DPrint("SEEDPID_" .. tostring(i), "SEED row["..i.."] name="..tostring(row.name or "nil").." pid="..tostring(pid))
+            DPrint("SEEDPID_" .. tostring(i),
+                "SEED row["..i.."] name="..tostring(row.name or "nil")..
+                " pid="..tostring(pid)..
+                " roleAssignedRaw="..tostring(rec.roleAssignedRaw)..
+                " role="..tostring(rec.role)..
+                " specID="..tostring(rec.specID))
             if pid and pid > 0 then
                 local c = (self.pidCounts[pid] or 0) + 1
                 self.pidCounts[pid] = c
@@ -4448,12 +4506,20 @@ function BGE:RefreshVisibility()
         local rated = false
         local isRatedBG = false
         local isRatedSoloRBG = false
+        local isSoloRBG = false
 
         if (not preview) and IsInPVPInstance() and self._mode ~= "arena" then
-            -- Distinguish Rated BG (10v10) vs Rated Solo RBG / Blitz (8v8)
+            -- Distinguish Rated BG (10v10) vs Solo RBG / Blitz (8v8)
             if C_PvP and C_PvP.IsRatedSoloRBG then
                 local okS, s = pcall(C_PvP.IsRatedSoloRBG)
                 if okS and s then isRatedSoloRBG = true end
+            end
+            if C_PvP and C_PvP.IsSoloRBG then
+                local okSR, sr = pcall(C_PvP.IsSoloRBG)
+                if okSR and sr then isSoloRBG = true end
+            end
+            if isRatedSoloRBG then
+                isSoloRBG = true
             end
 
             if (not isRatedSoloRBG) and C_PvP and C_PvP.IsRatedBattleground then
@@ -4478,7 +4544,7 @@ function BGE:RefreshVisibility()
             --   else: 10
             --   else: 15 (create enough rows for 15v15; unused rows stay hidden in 10v10)
 
-            if isRatedSoloRBG then
+            if isSoloRBG then
                 want = 8
             elseif isRatedBG then
                 want = 10
@@ -4577,7 +4643,7 @@ function BGE:RefreshVisibility()
         -- This drives the columns/rows/width/height/gaps used by ApplyAnchors/ApplyRowLayout.
         -- Only pick a live-match profile inside PvP; preview uses ResolvePreviewProfilePrefix() at the top.
         if (not preview) and IsInPVPInstance() and self._mode ~= "arena" then
-            if isRatedSoloRBG and want == 8 then
+            if isSoloRBG and want == 8 then
                 self._profilePrefix = "bgeRated"
             elseif isRatedBG then
                 self._profilePrefix = "bge10"
