@@ -2334,6 +2334,20 @@ function BGE:SeedRowsFromScoreboard()
         -- If we guess 10 too early in a 15v15, we permanently stop at 10.
         local expected = self._expectedBGTeamSize
         if not expected then
+            -- Solo RBG / Blitz are 8v8. Treat these as 8 explicitly.
+            local isSoloRBG = false
+            if C_PvP and C_PvP.IsRatedSoloRBG then
+                local ok, v = pcall(C_PvP.IsRatedSoloRBG)
+                if ok and v then isSoloRBG = true end
+            end
+            if (not isSoloRBG) and C_PvP and C_PvP.IsSoloRBG then
+                local ok, v = pcall(C_PvP.IsSoloRBG)
+                if ok and v then isSoloRBG = true end
+            end
+            if isSoloRBG then
+                expected = 8
+            end
+
             local mapID = nil
             if C_Map and C_Map.GetBestMapForUnit then
                 local okM, mid = pcall(C_Map.GetBestMapForUnit, "player")
@@ -2362,8 +2376,8 @@ function BGE:SeedRowsFromScoreboard()
             elseif maxPlayers and maxPlayers == 10 then
                 expected = 10
             -- Fallback only if maxPlayers not resolved:
-            elseif mapID == 1366 or mapID == 112 or mapID == 968 then
-                expected = 15
+            elseif maxPlayers and maxPlayers == 8 then
+                expected = 8
             end
 
             -- Fallback: infer from scoreboard total once it has populated.
@@ -2378,7 +2392,10 @@ function BGE:SeedRowsFromScoreboard()
                     expected = 40
                 elseif total >= 26 then
                     expected = 15
-                elseif age >= 25 and rosterN >= 10 then
+                elseif total >= 16 then
+                    -- 8v8 (both teams) once the scoreboard has actually populated
+                    expected = 8
+                elseif age >= 90 and rosterN >= 10 then
                     -- Only decide 10v10 once we've had time for the scoreboard to fill.
                     expected = 10
                 end
@@ -4448,12 +4465,20 @@ function BGE:RefreshVisibility()
         local rated = false
         local isRatedBG = false
         local isRatedSoloRBG = false
+        local isSoloRBG = false
 
         if (not preview) and IsInPVPInstance() and self._mode ~= "arena" then
-            -- Distinguish Rated BG (10v10) vs Rated Solo RBG / Blitz (8v8)
+            -- Distinguish Rated BG (10v10) vs Solo RBG / Blitz (8v8)
             if C_PvP and C_PvP.IsRatedSoloRBG then
                 local okS, s = pcall(C_PvP.IsRatedSoloRBG)
                 if okS and s then isRatedSoloRBG = true end
+            end
+            if C_PvP and C_PvP.IsSoloRBG then
+                local okSR, sr = pcall(C_PvP.IsSoloRBG)
+                if okSR and sr then isSoloRBG = true end
+            end
+            if isRatedSoloRBG then
+                isSoloRBG = true
             end
 
             if (not isRatedSoloRBG) and C_PvP and C_PvP.IsRatedBattleground then
@@ -4478,7 +4503,7 @@ function BGE:RefreshVisibility()
             --   else: 10
             --   else: 15 (create enough rows for 15v15; unused rows stay hidden in 10v10)
 
-            if isRatedSoloRBG then
+            if isSoloRBG then
                 want = 8
             elseif isRatedBG then
                 want = 10
@@ -4577,7 +4602,7 @@ function BGE:RefreshVisibility()
         -- This drives the columns/rows/width/height/gaps used by ApplyAnchors/ApplyRowLayout.
         -- Only pick a live-match profile inside PvP; preview uses ResolvePreviewProfilePrefix() at the top.
         if (not preview) and IsInPVPInstance() and self._mode ~= "arena" then
-            if isRatedSoloRBG and want == 8 then
+            if isSoloRBG and want == 8 then
                 self._profilePrefix = "bgeRated"
             elseif isRatedBG then
                 self._profilePrefix = "bge10"
