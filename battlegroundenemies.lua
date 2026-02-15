@@ -1328,6 +1328,7 @@ function BGE:BuildRosterFromScoreboard()
                             classToken = classToken,
                             specID = specID,
                             role = role,
+                            roleAssignedRaw = info.roleAssigned,
                             raceName = raceName,
                             raceID = raceID,
                             classID = classID,
@@ -2388,11 +2389,11 @@ function BGE:SeedRowsFromScoreboard()
                 local okT, total = pcall(_G.GetNumBattlefieldScores)
                 total = (okT and type(total) == "number") and total or 0
 
-                if total >= 60 then
+                if total >= 41 then
                     expected = 40
-                elseif total >= 26 then
+                elseif total >= 21 then
                     expected = 15
-                elseif total >= 16 then
+                elseif total <= 16 then
                     -- 8v8 (both teams) once the scoreboard has actually populated
                     expected = 8
                 elseif age >= 90 and rosterN >= 10 then
@@ -2631,7 +2632,12 @@ function BGE:SeedRowsFromScoreboard()
             -- PID map (unique-only)
             local pid = CalculatePIDFull(row.raceID, row.classID, row.level, row.faction, row.sex, row.honorLevel)
             row.pid = pid
-            DPrint("SEEDPID_" .. tostring(i), "SEED row["..i.."] name="..tostring(row.name or "nil").." pid="..tostring(pid))
+            DPrint("SEEDPID_" .. tostring(i),
+                "SEED row["..i.."] name="..tostring(row.name or "nil")..
+                " pid="..tostring(pid)..
+                " roleAssignedRaw="..tostring(rec.roleAssignedRaw)..
+                " role="..tostring(rec.role)..
+                " specID="..tostring(rec.specID))
             if pid and pid > 0 then
                 local c = (self.pidCounts[pid] or 0) + 1
                 self.pidCounts[pid] = c
