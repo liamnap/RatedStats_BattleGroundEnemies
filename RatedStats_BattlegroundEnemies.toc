@@ -1,7 +1,7 @@
 ## Title: Rated Stats - Battleground Enemies
 ## Notes: Enemy list frames from nameplates (BG/RBGB). Requires RatedStats.
 ## Author: liamnap
-## Version: v1.65-beta
+## Version: v1.15
 ## Interface: 120000, 120001
 ## DefaultState: enabled
 ## IconTexture: Interface\AddOns\RatedStats\RatedStats.tga
