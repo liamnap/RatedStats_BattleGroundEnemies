@@ -34,6 +34,8 @@ BGE.maxPlates = 40
 -- Scoreboard seed state (BG start)
 BGE._seededThisBG = false
 BGE._oorEnabled = false -- latch: enable out-of-range dimming only after gates open
+BGE._teamDidNotFullyEnter = false
+BGE._teamDidNotFullyEnterWarned = false
 BGE.scoreClassList = {}
 -- Roster seeding list of { guid, name, classToken, specID, role }
 BGE.roster = {}
@@ -110,6 +112,10 @@ local function DPrint(key, msg)
     if (now - last) < 1.0 then return end
     BGE._dbgLast[key] = now
     print("|cffb69e86[RSTATS-BGE]|r " .. msg)
+end
+
+local function PrintTeamRosterDidNotFill()
+    print("|cffb69e86Rated Stats:|r |cffffffffYour team roster didn't fill. Enemy frames cannot be shown. Hiding frame now.|r")
 end
 
 local function Bool01(v) return v and "1" or "0" end
@@ -2779,6 +2785,8 @@ function BGE:UpdateMatchState()
         self._oorEnabled = false
         self._scoreLocked = false
         self._seedPending = false
+        self._teamDidNotFullyEnter = false
+        self._teamDidNotFullyEnterWarned = false
         self:StopScoreWarmup()
         self.achievCache = nil -- reset per BG
         return
@@ -2794,6 +2802,24 @@ function BGE:UpdateMatchState()
             self._scoreLocked = true
             self._seedPending = false
             self:StopScoreWarmup()
+
+            if self._mode ~= "arena" then
+                local expected = self._expectedBGTeamSize or self._expectedBGTeamSizeGuess
+                local rosterN = (self.roster and #self.roster) or 0
+
+                if expected and rosterN < expected then
+                    self._teamDidNotFullyEnter = true
+
+                    if not self._teamDidNotFullyEnterWarned then
+                        self._teamDidNotFullyEnterWarned = true
+                        PrintTeamRosterDidNotFill()
+                    end
+
+                    self:RefreshVisibility()
+                    return
+                end
+            end
+
             -- Optional (but recommended): bind any already-visible nameplates to seeded rows.
             if self.EngagedNameplateSweep then
                 self:EngagedNameplateSweep()
@@ -4473,6 +4499,15 @@ function BGE:RefreshVisibility()
         return
     end
 
+    if IsInPVPInstance() and self._mode ~= "arena" and self._teamDidNotFullyEnter then
+        self.frame:SetAlpha(0)
+        self:StopTargetScanner()
+        self:StopScoreWarmup()
+        if not InLockdown() then
+            self.frame:Hide()
+        end
+        return
+    end    
 
     -- Resolve which per-size profile to use while OUTSIDE PvP.
     -- Preview is only supported for one profile at a time.
@@ -4726,6 +4761,8 @@ function BGE:RefreshVisibility()
         self._enteredBGAt = nil
         self._seedStartRetries = nil
         self._seedRetryPending = nil
+        self._teamDidNotFullyEnter = false
+        self._teamDidNotFullyEnterWarned = false
         self.frame:SetAlpha(0)
         if not InLockdown() then
             self.frame:Hide()
