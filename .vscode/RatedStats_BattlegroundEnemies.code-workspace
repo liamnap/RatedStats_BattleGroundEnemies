@@ -73,7 +73,8 @@
 			"SettingsInbound",
 			"PowerBarColor",
 			"RAID_CLASS_COLORS",
-			"GetUnitName"
+			"GetUnitName",
+			"GetCVarBool"
 		],
 		"Lua.type.weakUnionCheck": true
 	}
