@@ -37,6 +37,8 @@ BGE._oorEnabled = false -- latch: enable out-of-range dimming only after gates o
 BGE._teamDidNotFullyEnter = false
 BGE._teamDidNotFullyEnterWarned = false
 BGE._enteredMidMatch = false
+BGE._latchedBGWant = nil
+BGE._latchedBGKind = nil
 BGE.scoreClassList = {}
 -- Roster seeding list of { guid, name, classToken, specID, role }
 BGE.roster = {}
@@ -2563,6 +2565,8 @@ function BGE:SeedRowsFromScoreboard()
         self._expectedBGTeamSizeGuess = nil
         self._seedStartRetries = nil
         self._seedRetryPending = nil
+        self._latchedBGWant = nil
+        self._latchedBGKind = nil
         self:UpdateRowVisibilities()
         return
     end
@@ -3622,8 +3626,16 @@ function BGE:UpdateHealth(row, unit)
         cur, maxv, secretNums = SafePlateHealth(readUnit)
     end
     if not cur or not maxv then
-        cur, maxv = SafeUnitHealth(unit)
+        -- Do not mix UnitHealth fallback into BG enemy exact HP text.
+        -- If we do not have a real bound nameplate read, keep the row stable and avoid fake precision.
+        if not row._lastHpCur or not row._lastHpMax then
+            pcall(row.hpText.SetText, row.hpText, "")
+        end
+        return
     end
+
+    row._lastHpCur = cur
+    row._lastHpMax = maxv
     if not cur or not maxv then return end
 
     local mode = GetSetting("bgeHealthTextMode", 2)
@@ -4557,7 +4569,6 @@ function BGE:RefreshVisibility()
         -- Relying on GetNumBattlefieldScores() early/late-join can be too low (e.g. 10 in a 15v15),
         -- which prevents rows 11..15 from ever existing.
         local want = 10
-        local rated = false
         local isRatedBG = false
         local isRatedSoloRBG = false
         local isSoloRBG = false
@@ -4583,6 +4594,43 @@ function BGE:RefreshVisibility()
                 local okR, r = pcall(_G.IsRatedBattleground)
                 if okR and r then isRatedBG = true end
             end
+
+            if not self._latchedBGWant then
+                if isSoloRBG then
+                    self._latchedBGWant = 8
+                    self._latchedBGKind = "blitz"
+                elseif isRatedBG then
+                    self._latchedBGWant = 10
+                    self._latchedBGKind = "rated"
+                end
+            end
+        end
+
+        -- Latch once per match so later refreshes cannot downgrade rated/blitz to normal BG.
+        if not self._latchedBGWant then
+            if isSoloRBG then
+                self._latchedBGWant = 8
+                self._latchedBGKind = "blitz"
+            elseif isRatedBG then
+                self._latchedBGWant = 10
+                self._latchedBGKind = "rated"
+            else
+                local _, instanceType, _, _, maxPlayers = GetInstanceInfo()
+                if instanceType == "pvp" then
+                    if maxPlayers == 10 then
+                        self._latchedBGWant = 10
+                        self._latchedBGKind = "normal10"
+                    elseif maxPlayers == 15 then
+                        self._latchedBGWant = 15
+                        self._latchedBGKind = "normal15"
+                    elseif type(maxPlayers) == "number" and maxPlayers > 15 then
+                        self._latchedBGWant = maxPlayers
+                        self._latchedBGKind = "epic"
+                    end
+                end
+            end
+        else
+            want = self._latchedBGWant
         end
 
         if preview then
@@ -4692,6 +4740,12 @@ function BGE:RefreshVisibility()
                     want = 10
                 end
             end -- rated
+
+            if self._latchedBGWant and (not preview) and self._mode ~= "arena" then
+                want = self._latchedBGWant
+            end
+        end
+
         end -- preview/arena/bg
         -- Select the per-size layout profile for this match.
         -- This drives the columns/rows/width/height/gaps used by ApplyAnchors/ApplyRowLayout.
