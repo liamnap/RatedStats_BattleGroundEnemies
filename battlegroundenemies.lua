@@ -4594,16 +4594,6 @@ function BGE:RefreshVisibility()
                 local okR, r = pcall(_G.IsRatedBattleground)
                 if okR and r then isRatedBG = true end
             end
-
-            if not self._latchedBGWant then
-                if isSoloRBG then
-                    self._latchedBGWant = 8
-                    self._latchedBGKind = "blitz"
-                elseif isRatedBG then
-                    self._latchedBGWant = 10
-                    self._latchedBGKind = "rated"
-                end
-            end
         end
 
         -- Latch once per match so later refreshes cannot downgrade rated/blitz to normal BG.
@@ -4744,8 +4734,6 @@ function BGE:RefreshVisibility()
             if self._latchedBGWant and (not preview) and self._mode ~= "arena" then
                 want = self._latchedBGWant
             end
-        end
-
         end -- preview/arena/bg
         -- Select the per-size layout profile for this match.
         -- This drives the columns/rows/width/height/gaps used by ApplyAnchors/ApplyRowLayout.
@@ -4831,6 +4819,8 @@ function BGE:RefreshVisibility()
         wipe(self.pendingUnitByRow)
         self._expectedBGTeamSize = nil
         self._expectedBGTeamSizeGuess = nil
+        self._latchedBGWant = nil
+        self._latchedBGKind = nil
         self._enteredBGAt = nil
         self._seedStartRetries = nil
         self._seedRetryPending = nil
