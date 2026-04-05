@@ -3658,6 +3658,14 @@ function BGE:UpdateHealth(row, unit)
     if self._mode ~= "arena" and IsNameplateUnit(readUnit) then
         cur, maxv, secretNums = SafePlateHealth(readUnit)
     end
+
+    -- Fallback for target/focus/mouseover/raidtarget style units.
+    -- Clicking a row can give us one of these even if the row has no stable nameplate bar yet.
+    if (not cur or not maxv) and UnitExists(readUnit) then
+        cur, maxv = SafeUnitHealth(readUnit)
+        secretNums = false
+    end
+
     if not cur or not maxv then
         return
     end
