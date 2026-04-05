@@ -3616,14 +3616,19 @@ function BGE:PollLiveBars()
     if not self.rows then return end
 
     -- Late nameplates / delayed scoreboard-name availability:
-    -- keep doing a light bind scan so rows that missed NAME_PLATE_UNIT_ADDED
-    -- can still attach to their live nameplate without needing a click/target.
+    -- re-run the full plate binder, not the reduced GUID scan.
+    -- HandlePlateAdded has extra fallback paths that ScanNameplatesForGuidBindings does not.
     do
         local now = GetTime()
         local last = self._lastLiveBindScanAt or 0
         if (now - last) >= 1.0 then
             self._lastLiveBindScanAt = now
-            self:ScanNameplatesForGuidBindings()
+            for i = 1, (self.maxPlates or 40) do
+                local u = "nameplate" .. tostring(i)
+                if UnitExists(u) and not UnitIsFriend("player", u) then
+                    self:HandlePlateAdded(u)
+                end
+            end
         end
     end
 
