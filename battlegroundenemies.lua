@@ -3618,7 +3618,6 @@ function BGE:UpdateHealth(row, unit)
         row._lastClipAt = nil
         row._hpSB = nil
         -- Important: don't carry old text across recycled frames/units.
-        pcall(row.hpText.SetText, row.hpText, "")
     end
 
     local secretNums = false
@@ -3626,11 +3625,6 @@ function BGE:UpdateHealth(row, unit)
         cur, maxv, secretNums = SafePlateHealth(readUnit)
     end
     if not cur or not maxv then
-        -- Do not mix UnitHealth fallback into BG enemy exact HP text.
-        -- If we do not have a real bound nameplate read, keep the row stable and avoid fake precision.
-        if not row._lastHpCur or not row._lastHpMax then
-            pcall(row.hpText.SetText, row.hpText, "")
-        end
         return
     end
 
