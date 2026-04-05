@@ -985,8 +985,8 @@ local function SafePlateHealth(unit)
         (uf.healthBar and uf.healthBar.healthBar),
     }
     for i = 1, #candidates do
-        local cur, maxv = SafeStatusBarValues(candidates[i])
-        if cur and maxv then return cur, maxv end
+        local cur, maxv, secret = SafeStatusBarValues(candidates[i])
+        if cur and maxv then return cur, maxv, secret end
     end
     -- Last resort: scan child frames for the first StatusBar with values.
     if uf.GetChildren then
@@ -996,8 +996,8 @@ local function SafePlateHealth(unit)
             if k and k.GetObjectType then
                 local okOT, ot = pcall(k.GetObjectType, k)
                 if okOT and ot == "StatusBar" then
-                    local cur, maxv = SafeStatusBarValues(k)
-                    if cur and maxv then return cur, maxv end
+                    local cur, maxv, secret = SafeStatusBarValues(k)
+                    if cur and maxv then return cur, maxv, secret end
                 end
             end
         end
@@ -3744,6 +3744,7 @@ function BGE:UpdateHealth(row, unit)
                 if sb then
                     local s = SafePlateHealthNumericText(sb)
                     if s then
+                        hpTxtFromPlateNumeric = true
                         -- Try to display it right now. If this fails (secret string), fall back below.
                         local okSet = pcall(row.hpText.SetText, row.hpText, s)
                         if okSet then
