@@ -388,6 +388,10 @@ function BGE:ScanNameplatesForGuidBindings()
                 end
 
                 row.unit = unit
+                DPrint("SCANBIND_" .. tostring(unit),
+                    "SCANBIND unit=" .. tostring(unit) ..
+                    " rowName=" .. tostring(row.name or "nil") ..
+                    " by=" .. tostring(bindBy or "nil"))
                 row._preview = false
                 row._outOfRange = false
                 self.rowByUnit[unit] = row
@@ -3351,6 +3355,15 @@ function BGE:UpdateRowVisibilities()
                 ApplyClassAlpha(row, CLASS_ALPHA_ACTIVE)
                 row:SetAlpha(ROW_ALPHA_ACTIVE)
             elseif row._seenIdentity then
+                if GetSetting("bgeDebug", false) then
+                    DPrint("ROWVIS_" .. tostring(i),
+                        "ROWVIS i=" .. tostring(i) ..
+                        " name=" .. tostring(row.name or "nil") ..
+                        " unit=" .. tostring(row.unit or "nil") ..
+                        " alt=" .. tostring(row._altUnit or "nil") ..
+                        " seen=" .. tostring(row._seenIdentity and true or false) ..
+                        " hpText=" .. tostring((row.hpText and row.hpText.GetText and row.hpText:GetText()) or "nil"))
+                end
                 -- If this unit is dead, dim it (dead should not look fully active).
                 local isDead = false
                 if row.unit and UnitExists(row.unit) and UnitIsDeadOrGhost then
@@ -4288,6 +4301,11 @@ function BGE:HandlePlateAdded(unit)
     end
 
     row.unit = unit
+    DPrint("PLATEBIND_" .. tostring(unit),
+        "PLATEBIND unit=" .. tostring(unit) ..
+        " rowName=" .. tostring(row.name or "nil") ..
+        " fullName=" .. tostring(row.fullName or "nil") ..
+        " by=" .. tostring(lookedUpBy or "nil"))
     row._preview = false
     row._outOfRange = false
     row._seeded = nil
