@@ -3555,6 +3555,27 @@ function BGE:RetryMissingIdentities()
     end
 end
 
+function BGE:StartLiveBarPoller()
+    if self._liveBarPoller then return end
+    if not (C_Timer and C_Timer.NewTicker) then return end
+
+    self._liveBarPoller = C_Timer.NewTicker(0.5, function()
+        local b = _G.RSTATS_BGE
+        if not b then return end
+        if b._mode == "arena" then return end
+        if not GetSetting("bgeEnabled", true) then return end
+        if not IsInPVPInstance() then return end
+        b:PollLiveBars()
+    end)
+end
+
+function BGE:StopLiveBarPoller()
+    if self._liveBarPoller then
+        self._liveBarPoller:Cancel()
+        self._liveBarPoller = nil
+    end
+end
+
 function BGE:StartTargetScanner()
     if self._targetScanner then return end
     if not (C_Timer and C_Timer.NewTicker) then return end
@@ -4539,11 +4560,14 @@ function BGE:RefreshVisibility()
         end
         self.frame:SetAlpha(1)
 
-        -- Keep pulling HP/PWR from target/focus/ally-target tokens while in BG.
+        -- Keep pulling HP/PWR from target/focus/ally-target tokens while in BG,
+        -- and also poll already-bound nameplate bars so HP appears without clicking.
         if IsInPVPInstance() and self._mode ~= "arena" then
             self:StartTargetScanner()
+            self:StartLiveBarPoller()
         else
             self:StopTargetScanner()
+            self:StopLiveBarPoller()
         end
 
         -- Create only as many secure rows as we are configured to DISPLAY.
@@ -4783,6 +4807,7 @@ function BGE:RefreshVisibility()
     else
         -- Leaving PvP: hard clear
         self:StopTargetScanner()
+        self:StopLiveBarPoller()
         self:StopScoreWarmup()
         self:ClearPreviewRows()
         for _, row in ipairs(self.rows) do
