@@ -4601,6 +4601,7 @@ function BGE:RefreshVisibility()
             if isSoloRBG then
                 self._latchedBGWant = 8
                 self._latchedBGKind = "blitz"
+                print("|cffb69e86Rated Stats:|r latch want=8 kind=blitz map=" .. tostring(select(1, GetInstanceInfo())))
             elseif isRatedBG then
                 self._latchedBGWant = 10
                 self._latchedBGKind = "rated"
