@@ -4108,7 +4108,10 @@ function BGE:HandlePlateAdded(unit)
             local full = ScoreFullNameFromGuid(guidRaw)
             if full then
                 local okRow, hit = pcall(function() return self.rowByFullName[full] end)
-                if okRow and hit then row = hit; lookedUpBy = "guidScoreName" end
+                if okRow and hit then
+                    row = hit
+                    lookedUpBy = "guidScoreName"
+                end
             end
         end
     end
@@ -4126,6 +4129,7 @@ function BGE:HandlePlateAdded(unit)
 
     if not row then
         local disp, dispBase = GetNameplateDisplayNames(unit)
+
         -- 1) Try full match first (realm-qualified)
         if disp and self.rowByFullName then
             local okRow, hit = pcall(function() return self.rowByFullName[disp] end)
@@ -4134,6 +4138,7 @@ function BGE:HandlePlateAdded(unit)
                 lookedUpBy = "dispFull"
             end
         end
+
         -- 2) Only if base name is unique, allow base match
         if (not row) and dispBase and self.rowByBaseName and self.baseNameCounts and self.baseNameCounts[dispBase] == 1 then
             local okRow, hit = pcall(function() return self.rowByBaseName[dispBase] end)
@@ -4143,14 +4148,15 @@ function BGE:HandlePlateAdded(unit)
             end
         end
     end
+
     -- 3) Fallback: PID match when GUID and display name are unavailable.
     if (not row) and self.rowByPID then
-        -- If the unit isn't fully initialized yet (common right after ADDED),
-        -- honor/level/faction may be 0/nil, producing a PID that will never match the seeded one.
         local okH, honor = pcall(UnitHonorLevel, unit)
         honor = (okH and type(honor) == "number") and honor or 0
+
+        -- Keep delayed retry for weak early hostile nameplate data,
+        -- but DO NOT block immediate PID fallback on this same pass.
         if honor == 0 and C_Timer and C_Timer.After then
-            -- honor can remain 0 indefinitely on hostile units; never allow unbounded retries.
             self._honorZeroRetry = self._honorZeroRetry or {}
             self._honorZeroPending = self._honorZeroPending or {}
 
@@ -4171,62 +4177,55 @@ function BGE:HandlePlateAdded(unit)
                     end
                 end)
             end
-        else
-            -- Seeded rows are built from scoreboard data which has no level/sex in 12.x,
-            -- so PID matching against seeded rows MUST be seed-compatible (level=0, sex=0).
-            local pid = UnitPIDSeedCompat(unit)
-            if pid and pid > 0 then
-                local okRow, hit = pcall(function() return self.rowByPID[pid] end)
-                if okRow and hit then
-                    row = hit
-                    lookedUpBy = "pid"
+        end
+
+        -- Seeded rows are built from scoreboard data which has no level/sex in 12.x,
+        -- so PID matching against seeded rows MUST be seed-compatible (level=0, sex=0).
+        local pid = UnitPIDSeedCompat(unit)
+        if (not row) and pid and pid > 0 then
+            local okRow, hit = pcall(function() return self.rowByPID[pid] end)
+            if okRow and hit then
+                row = hit
+                lookedUpBy = "pid"
+            end
+        end
+
+        -- Mercenary fallback: in merc mode the nameplate race may not match the scoreboard race.
+        -- Try a no-race PID, but only if it yields a unique hit (map is unique-only).
+        if (not row) and UnitIsMercenary and UnitIsMercenary(unit) and self.rowByPIDNoRace then
+            local pidNR = UnitPIDNoRaceSeedCompat(unit)
+            if pidNR and pidNR > 0 then
+                local okRowNR, hitNR = pcall(function() return self.rowByPIDNoRace[pidNR] end)
+                if okRowNR and hitNR then
+                    row = hitNR
+                    lookedUpBy = "pidNoRace"
                 end
             end
+        end
 
-            -- Mercenary fallback: in merc mode the nameplate race may not match the scoreboard race.
-            -- Try a no-race PID, but only if it yields a unique hit (map is unique-only).
-            if (not row) and UnitIsMercenary and UnitIsMercenary(unit) and self.rowByPIDNoRace then
-                local pidNR = UnitPIDNoRaceSeedCompat(unit)
-                if pidNR and pidNR > 0 then
-                    local okRowNR, hitNR = pcall(function() return self.rowByPIDNoRace[pidNR] end)
-                    if okRowNR and hitNR then
-                        row = hitNR
-                        lookedUpBy = "pidNoRace"
-                    end
+        -- Cross-faction/visual race can mismatch even when not flagged as Mercenary.
+        -- Keep this conservative: only when honor is actually populated.
+        if (not row) and self.rowByPIDNoRace and UnitIsPlayer(unit) and (not UnitIsFriend("player", unit)) and honor > 0 then
+            local pidNR2 = UnitPIDNoRaceSeedCompat(unit)
+            if pidNR2 and pidNR2 > 0 then
+                local okRowNR2, hitNR2 = pcall(function() return self.rowByPIDNoRace[pidNR2] end)
+                if okRowNR2 and hitNR2 then
+                    row = hitNR2
+                    lookedUpBy = "pidNoRace2"
                 end
             end
+        end
 
-            -- Cross-faction/visual race can mismatch even when not flagged as Mercenary.
-            -- Still conservative: unique-only map + require honor>0 so we don't bind on early junk.
-            if (not row) and self.rowByPIDNoRace and UnitIsPlayer(unit) and (not UnitIsFriend("player", unit)) then
-                local okH, honor = pcall(UnitHonorLevel, unit)
-                if okH and honor and honor > 0 then
-                    local pidNR2 = UnitPIDNoRaceSeedCompat(unit)
-                    if pidNR2 and pidNR2 > 0 then
-                        local okRowNR2, hitNR2 = pcall(function() return self.rowByPIDNoRace[pidNR2] end)
-                        if okRowNR2 and hitNR2 then
-                            row = hitNR2
-                            lookedUpBy = "pidNoRace2"
-                        end
-                    end
-                end
-            end
-
-            -- Loose PID fallback (honor=0 on nameplate units)
-            if (not row) and self.rowByPIDLoose then
-                local okC, _, _, classID = pcall(UnitClass, unit)
-                local facIndex = GetUnitTrueFactionIndex(unit)
-                local okR, _, _, raceID = pcall(UnitRace, unit)
-                local okL, level = pcall(UnitLevel, unit)
-                local okS, sex = pcall(UnitSex, unit)
-                if okC and classID then
-                    local pidL = UnitPIDLooseSeedCompat(unit)
-                    if pidL and pidL > 0 then
-                        local okRowL, hitL = pcall(function() return self.rowByPIDLoose[pidL] end)
-                        if okRowL and hitL then
-                            row = hitL
-                            lookedUpBy = "pidLoose"
-                        end
+        -- Loose PID fallback: this is specifically the weak-data / honor-zero fallback.
+        if (not row) and self.rowByPIDLoose then
+            local okC, _, _, classID = pcall(UnitClass, unit)
+            if okC and classID then
+                local pidL = UnitPIDLooseSeedCompat(unit)
+                if pidL and pidL > 0 then
+                    local okRowL, hitL = pcall(function() return self.rowByPIDLoose[pidL] end)
+                    if okRowL and hitL then
+                        row = hitL
+                        lookedUpBy = "pidLoose"
                     end
                 end
             end
@@ -4236,7 +4235,12 @@ function BGE:HandlePlateAdded(unit)
     if GetSetting("bgeDebug", false) then
         local pidStrong = (UnitPID and UnitPID(unit)) or 0
         local pid = UnitPIDSeedCompat(unit)
-        DPrint("PIDCHK_"..unit, "PIDCHK unit="..unit.." pid="..tostring(pid).." strong="..tostring(pidStrong).." seeded="..Bool01(self.rowByPID and self.rowByPID[pid] ~= nil))
+        DPrint("PIDCHK_" .. unit,
+            "PIDCHK unit=" .. unit ..
+            " pid=" .. tostring(pid) ..
+            " strong=" .. tostring(pidStrong) ..
+            " seeded=" .. Bool01(self.rowByPID and self.rowByPID[pid] ~= nil)
+        )
     end
 
     if GetSetting("bgeDebug", false) then
@@ -4248,28 +4252,27 @@ function BGE:HandlePlateAdded(unit)
             " by=" .. lookedUpBy ..
             " disp=" .. (dispFull or "nil") ..
             " guidKey=" .. (SafeToString(guid) or "<secret>") ..
-            " pid=" .. tostring(pidNow) .. " pidS=" .. tostring(pidStrong2) ..
+            " pid=" .. tostring(pidNow) ..
+            " pidS=" .. tostring(pidStrong2) ..
             " hit=" .. Bool01(row ~= nil)
         )
     end
 
     if not row then
-        -- Not seeded yet (scoreboard delay). Keep it simple: ignore until seeded.
         DebugUnitSnapshot("PLATE_ADDED_UNSEEDED", unit)
 
-        -- nameplate units recycle; don't poison retries for a new occupant
+        -- Nameplate units recycle; don't poison retries for a new occupant.
         do
             local key = 0
-            -- Prefer seed-compatible PID (stable when available)
             if UnitPIDSeedCompat then
                 local p = UnitPIDSeedCompat(unit) or 0
                 if p and p > 0 then key = p end
             end
-            -- fallback to raw pid if seed-compatible isn't ready yet
             if key == 0 and UnitPID then
                 local p2 = UnitPID(unit) or 0
                 if p2 and p2 > 0 then key = p2 end
             end
+
             local prev = self._plateAddRetryKey and self._plateAddRetryKey[unit] or nil
             if prev ~= key then
                 self._plateAddRetryKey[unit] = key
@@ -4282,7 +4285,6 @@ function BGE:HandlePlateAdded(unit)
             end
         end
 
-        -- But: nameplate text often appears later and PID isn't unique. Retry a few times.
         if C_Timer and C_Timer.After then
             self._plateAddRetry = self._plateAddRetry or {}
             self._plateAddRetryPending = self._plateAddRetryPending or {}
@@ -4303,11 +4305,11 @@ function BGE:HandlePlateAdded(unit)
                     b._plateAddRetryPending[u] = nil
                     if not UnitExists(u) then return end
 
-                    -- If token recycled, do not keep retrying the wrong occupant.
                     local curKey = b._plateAddRetryKey and b._plateAddRetryKey[u] or nil
                     if expectedKey ~= nil and curKey ~= expectedKey then
                         return
                     end
+
                     b:HandlePlateAdded(u)
                 end)
             end
@@ -4317,10 +4319,8 @@ function BGE:HandlePlateAdded(unit)
 
     self._plateAddRetry[unit] = nil
 
-    -- Nameplate units recycle. Make sure only one row owns this unit token.
     ClearUnitCollision(self, unit, row)
 
-    -- If the row had an old unit mapping, clear it
     if row.unit and self.rowByUnit[row.unit] == row then
         self.rowByUnit[row.unit] = nil
     end
@@ -4336,7 +4336,6 @@ function BGE:HandlePlateAdded(unit)
     row._seeded = nil
     self.rowByUnit[unit] = row
 
-    -- Force bar rescan on new unit token (avoid reusing cached bars from a recycled nameplate)
     if row._barsUnit ~= unit then
         row._barsUnit = nil
         row._hpSB = nil
@@ -4345,7 +4344,6 @@ function BGE:HandlePlateAdded(unit)
         row._pwrSBAt = nil
     end
 
-    -- Make click-to-target correct: bind this roster row to the actual nameplate unit.
     if not InLockdown() then
         row:SetAttribute("unit", unit)
     else
@@ -4359,8 +4357,6 @@ function BGE:HandlePlateAdded(unit)
 
     DebugUnitSnapshot("PLATE_ADDED", unit)
 
-    -- NAME_PLATE_UNIT_ADDED can arrive before name/class/text is usable.
-    -- Only schedule retries if we *still* need them after the first update.
     local needRetry = (not row.name) or (not row.classFile) or (not FontStringHasText(row.hpText))
     if needRetry and C_Timer and C_Timer.After then
         local u = unit
@@ -4385,7 +4381,6 @@ function BGE:HandlePlateAdded(unit)
         end)
     end
 
-    -- Never Show() here; secure rows stay shown forever.
     self:UpdateRowVisibilities()
     self:SyncSelectedRowToTarget()
 end
