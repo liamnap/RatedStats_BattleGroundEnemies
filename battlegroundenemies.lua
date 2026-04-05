@@ -5082,7 +5082,7 @@ CreateMainFrame = function()
         -- Critical: never do identity retry polling in combat; it's too expensive in big fights.
         if InLockdown() then return end
         f._bgeRetryAccum = (f._bgeRetryAccum or 0) + (elapsed or 0)
-        if f._bgeRetryAccum < 10 then return end
+        if f._bgeRetryAccum < 1 then return end
         f._bgeRetryAccum = 0
         _G.RSTATS_BGE:RetryMissingIdentities()
     end)
