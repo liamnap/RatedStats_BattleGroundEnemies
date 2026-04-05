@@ -3725,8 +3725,7 @@ function BGE:UpdateHealth(row, unit)
             end
         else
             -- Mode 1 ("Current") and Mode 2 ("Current/Total")
-            -- On 12.0+/Midnight, UnitHealth/UnitHealthMax on enemies can be scrubbed/secret and look "wrong" or identical.
-            -- Prefer Blizzard's numeric nameplate text when available.
+            -- Prefer stable bar-driven text first. Blizzard numeric plate text is only a fallback.
             if self._mode ~= "arena" and IsNameplateUnit(readUnit) then
                 local sb = row._hpSB
                 if sb == nil then
@@ -3735,46 +3734,33 @@ function BGE:UpdateHealth(row, unit)
                 elseif sb == false then
                     sb = nil
                 end
-                if sb then
-                    local s = SafePlateHealthNumericText(sb)
-                    if s then
-                        hpTxtFromPlateNumeric = true
-                        -- Try to display it right now. If this fails (secret string), fall back below.
-                        local okSet = pcall(row.hpText.SetText, row.hpText, s)
-                        if okSet then
-                            row._lastHpTextAt = now
-                            return
-                        end
-                    end
-                end
-            end
-
-            -- If numeric text couldn't be shown (often because it's secret), keep it dynamic via fill-geometry %.
-            if txt == nil and self._mode ~= "arena" and IsNameplateUnit(readUnit) then
-                local sb = row._hpSB
-                if sb and sb ~= false then
-                    local pct = SafePercentFromStatusBarFill(sb)
-                    if pct then txt = pct .. "%" end
-                end
             end
 
             if txt == nil then
-				-- If numbers are secret, do NOT format/compare them. Prefer display-only paths.
-				if secretNums then
-					-- 1) If we have nameplate numeric text, we already try it elsewhere.
-					-- 2) Otherwise fall back to fill-geometry percent (doesn't touch secret numbers).
-					if self._mode ~= "arena" and IsNameplateUnit(readUnit) then
-						local sb = row._hpSB
-						if sb and sb ~= false then
-							local pct = SafePercentFromStatusBarFill(sb)
-							if pct then txt = pct .. "%" end
-						end
-					end
-				end
-				if txt == nil then
-					local okT, t = pcall(FormatHealthText, cur, maxv, mode)
-					if okT then txt = t end
-				end
+                local sb = row._hpSB
+
+                -- Primary path: exact values only when they are not secret.
+                if txt == nil and not secretNums then
+                    local okT, t = pcall(FormatHealthText, cur, maxv, mode)
+                    if okT then txt = t end
+                end
+
+                -- Secondary path: use Blizzard numeric nameplate text if it exists.
+                if txt == nil and sb and sb ~= false then
+                    local s = SafePlateHealthNumericText(sb)
+                    if s then
+                        hpTxtFromPlateNumeric = true
+                        txt = s
+                    end
+                end
+
+                -- Last stable fallback for hostile secret values: dynamic percent from bar fill.
+                if txt == nil and secretNums and self._mode ~= "arena" and IsNameplateUnit(readUnit) then
+                    if sb and sb ~= false then
+                        local pct = SafePercentFromStatusBarFill(sb)
+                        if pct then txt = pct .. "%" end
+                    end
+                end
             end
         end
 
