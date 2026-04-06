@@ -388,6 +388,10 @@ function BGE:ScanNameplatesForGuidBindings()
                 end
 
                 row.unit = unit
+                row.UnitIDs = row.UnitIDs or {}
+                row.UnitIDs.Nameplate = unit
+                row.unitID = unit
+                row._unitIDKind = "Nameplate"
                 DPrint("SCANBIND_" .. tostring(unit),
                     "SCANBIND unit=" .. tostring(unit) ..
                     " rowName=" .. tostring(row.name or "nil") ..
@@ -462,6 +466,9 @@ end
 local function IsAltEnemyUnit(unit)
     if type(unit) ~= "string" then return false end
     if unit == "target" or unit == "focus" or unit == "mouseover" or unit == "softenemy" then
+        return true
+    end
+    if unit:match("^nameplate%d+target$") ~= nil then
         return true
     end
     return IsGroupTargetUnit(unit)
@@ -4639,6 +4646,19 @@ function BGE:HandleUnitUpdate(unit, what, force)
                 else
                     -- Don't bind secure click-to-target to unstable tokens like raid1target/party1target.
                     row._altUnit = unit
+                    local sourceKey = "GroupTarget"
+                    if unit == "target" then
+                        sourceKey = "Target"
+                    elseif unit == "focus" then
+                        sourceKey = "Focus"
+                    elseif unit == "mouseover" then
+                        sourceKey = "Mouseover"
+                    elseif unit == "softenemy" then
+                        sourceKey = "SoftEnemy"
+                    elseif type(unit) == "string" and unit:match("^nameplate%d+target$") then
+                        sourceKey = "NameplateTarget"
+                    end
+                    self:UpdateEnemyUnitID(row, sourceKey, unit)
                 end
             end
         end
