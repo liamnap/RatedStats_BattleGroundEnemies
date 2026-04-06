@@ -2670,6 +2670,10 @@ function BGE:SeedRowsFromScoreboard()
             end
             if u and UnitExists(u) and not UnitIsFriend("player", u) then
                 row.unit = u
+                row.UnitIDs = row.UnitIDs or {}
+                row.UnitIDs.Nameplate = u
+                row.unitID = u
+                row._unitIDKind = "Nameplate"
                 self.rowByUnit[u] = row
                 if not InLockdown() then
                     row:SetAttribute("unit", u)
@@ -2683,6 +2687,10 @@ function BGE:SeedRowsFromScoreboard()
                 -- If we already have a working alt unit (raidXtarget), keep it instead of dropping the binding.
                 if row._altUnit and UnitExists(row._altUnit) then
                     row.unit = row._altUnit
+                    row.UnitIDs = row.UnitIDs or {}
+                    row.UnitIDs.GroupTarget = row._altUnit
+                    row.unitID = row._altUnit
+                    row._unitIDKind = "GroupTarget"
                     self.rowByUnit[row._altUnit] = row
                     if not InLockdown() then
                         row:SetAttribute("unit", row._altUnit)
@@ -2693,6 +2701,10 @@ function BGE:SeedRowsFromScoreboard()
                     self:UpdatePower(row, row._altUnit)
                 else
                     row.unit = nil
+                    if row.UnitIDs then
+                        row.UnitIDs.Nameplate = nil
+                    end
+                    row.unitID = nil
                     if not InLockdown() then
                         row:SetAttribute("unit", nil)
                     end
@@ -4636,6 +4648,10 @@ function BGE:HandleUnitUpdate(unit, what, force)
                         row._pwrSBAt = nil
                     end
                     row.unit = unit
+                    row.UnitIDs = row.UnitIDs or {}
+                    row.UnitIDs.Nameplate = unit
+                    row.unitID = unit
+                    row._unitIDKind = "Nameplate"
                     self.rowByUnit[unit] = row
                     -- Make click-to-target correct only for real nameplate units.
                     if not InLockdown() then
