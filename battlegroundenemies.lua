@@ -1985,7 +1985,17 @@ local function MakeRow(parent, plateIndex)
     row.hpText:SetTextColor(RS_TEXT_R, RS_TEXT_G, RS_TEXT_B)
 
     row.guid = nil
-    row.unit = nil -- runtime unit token passed by events, also equals "nameplateX"
+    row.unit = nil -- secure click bind; only real nameplate units belong here
+	row.unitID = nil -- primary read source for HP/PWR/range
+	row.UnitIDs = {
+		Nameplate = nil,
+		Target = nil,
+		Focus = nil,
+		Mouseover = nil,
+		SoftEnemy = nil,
+		GroupTarget = nil,
+		NameplateTarget = nil,
+	}
     row.name = nil
     row.fullName = nil
     row.achievIconTex = nil
@@ -3388,15 +3398,17 @@ function BGE:UpdateRowVisibilities()
                     row:SetAlpha(ROW_ALPHA_OOR)
 
                 -- 2) Match started (gates open): out-of-range is based on nameplate presence.
-                elseif row.unit and UnitExists(row.unit) and not UnitIsFriend("player", row.unit) then
-                    row._outOfRange = false
-                    ApplyClassAlpha(row, CLASS_ALPHA_ACTIVE)
-                    row:SetAlpha(ROW_ALPHA_ACTIVE)
-
                 else
-                    row._outOfRange = true
-                    ApplyClassAlpha(row, CLASS_ALPHA_OOR)
-                    row:SetAlpha(ROW_ALPHA_OOR)
+                    local activeUnit = self:ResolveEnemyPrimaryUnitID(row)
+                    if activeUnit and UnitExists(activeUnit) and not UnitIsFriend("player", activeUnit) then
+                        row._outOfRange = false
+                        ApplyClassAlpha(row, CLASS_ALPHA_ACTIVE)
+                        row:SetAlpha(ROW_ALPHA_ACTIVE)
+                    else
+                        row._outOfRange = true
+                        ApplyClassAlpha(row, CLASS_ALPHA_OOR)
+                        row:SetAlpha(ROW_ALPHA_OOR)
+                    end
                 end
             else
                 row:SetAlpha(0)
@@ -3420,6 +3432,17 @@ function BGE:ReleaseRow(row)
     if not row then return end
 
     row.unit = nil
+	row.unitID = nil
+	if row.UnitIDs then
+		wipe(row.UnitIDs)
+		row.UnitIDs.Nameplate = nil
+		row.UnitIDs.Target = nil
+		row.UnitIDs.Focus = nil
+		row.UnitIDs.Mouseover = nil
+		row.UnitIDs.SoftEnemy = nil
+		row.UnitIDs.GroupTarget = nil
+		row.UnitIDs.NameplateTarget = nil
+	end
     row.guid = nil
     row.name = nil
     row.fullName = nil
@@ -3599,6 +3622,7 @@ function BGE:StartTargetScanner()
         if _G.RSTATS_BGE._mode == "arena" then return end
         if not IsInPVPInstance() then return end
         _G.RSTATS_BGE:ScanTargets()
+        _G.RSTATS_BGE:ScanNameplateTargets()
     end)
 end
 
@@ -3657,8 +3681,11 @@ function BGE:UpdateHealth(row, unit)
     -- Prefer reading the nameplate StatusBar when we can (this is the "works in BGs" path).
     -- If the update came from raidXtarget/etc but we also have a bound nameplate unit, use that for health read.
     local readUnit = unit
-    if self._mode ~= "arena" and row and row.unit and IsNameplateUnit(row.unit) and UnitExists(row.unit) then
-        readUnit = row.unit
+    if self._mode ~= "arena" and row then
+        local resolved = self:ResolveEnemyPrimaryUnitID(row)
+        if resolved and UnitExists(resolved) then
+            readUnit = resolved
+        end
     end
 
     -- Cache invalidation: nameplate frames get recycled.
@@ -3864,6 +3891,12 @@ function BGE:UpdateHealth(row, unit)
 end
 
 function BGE:UpdatePower(row, unit)
+    if self._mode ~= "arena" and row then
+        local resolved = self:ResolveEnemyPrimaryUnitID(row)
+        if resolved and UnitExists(resolved) then
+            unit = resolved
+        end
+    end
     if not GetSetting("bgeShowPower", true) then
         row.power:Hide()
         return
@@ -3967,6 +4000,70 @@ function BGE:GetRowForExternalUnit(unitID)
     return nil
 end
 
+local function EnemyUnitPriorityValue(key)
+    if key == "Nameplate" then return 1 end
+    if key == "Target" then return 2 end
+    if key == "Focus" then return 3 end
+    if key == "SoftEnemy" then return 4 end
+    if key == "Mouseover" then return 5 end
+    if key == "GroupTarget" then return 6 end
+    if key == "NameplateTarget" then return 7 end
+    return 99
+end
+
+function BGE:ResolveEnemyPrimaryUnitID(row)
+    if not row or not row.UnitIDs then return nil end
+
+    local bestKey, bestUnit, bestRank = nil, nil, 999
+    for key, unitID in pairs(row.UnitIDs) do
+        if type(unitID) == "string" and unitID ~= "" and UnitExists(unitID) and not UnitIsFriend("player", unitID) then
+            local rank = EnemyUnitPriorityValue(key)
+            if rank < bestRank then
+                bestRank = rank
+                bestKey = key
+                bestUnit = unitID
+            end
+        end
+    end
+
+    row.unitID = bestUnit
+    row._unitIDKind = bestKey
+    return bestUnit
+end
+
+function BGE:UpdateEnemyUnitID(row, key, value)
+    if not row then return end
+    row.UnitIDs = row.UnitIDs or {}
+
+    if value and UnitExists(value) and not UnitIsFriend("player", value) then
+        row.UnitIDs[key] = value
+    else
+        row.UnitIDs[key] = nil
+    end
+
+    self:ResolveEnemyPrimaryUnitID(row)
+end
+
+function BGE:ScanNameplateTargets()
+    if self._mode == "arena" then return end
+    if not GetSetting("bgeEnabled", true) then return end
+    if not IsInPVPInstance() then return end
+
+    for i = 1, (self.maxPlates or 40) do
+        local sourceUnit = "nameplate" .. tostring(i)
+        local targetUnit = sourceUnit .. "target"
+
+        if UnitExists(targetUnit) and not UnitIsFriend("player", targetUnit) then
+            local row = self:GetRowForExternalUnit(targetUnit)
+            if row then
+                self:UpdateEnemyUnitID(row, "NameplateTarget", targetUnit)
+                self:UpdateHealth(row, targetUnit)
+                self:UpdatePower(row, targetUnit)
+            end
+        end
+    end
+end
+
 function BGE:ScanTargets()
     if self._mode == "arena" then return end
     if not GetSetting("bgeEnabled", true) then return end
@@ -4044,8 +4141,20 @@ function BGE:ScanTargets()
         if u and UnitExists(u) and (not UnitIsFriend("player", u)) then
             local row = self:GetRowForExternalUnit(u)
             if row then
+                local sourceKey = "GroupTarget"
+                if u == "target" then
+                    sourceKey = "Target"
+                elseif u == "focus" then
+                    sourceKey = "Focus"
+                elseif u == "mouseover" then
+                    sourceKey = "Mouseover"
+                elseif u == "softenemy" then
+                    sourceKey = "SoftEnemy"
+                end
+
                 row._altUnit = u
                 row._altSeenAt = GetTime()
+                self:UpdateEnemyUnitID(row, sourceKey, u)
                 self:UpdateHealth(row, u)
                 self:UpdatePower(row, u)
                 anyHit = true
@@ -4082,6 +4191,7 @@ function BGE:HandleUnitTargetChanged(srcUnit)
 
     row._altUnit = targetUnit
     row._altSeenAt = GetTime()
+    self:UpdateEnemyUnitID(row, "GroupTarget", targetUnit)
     self:UpdateHealth(row, targetUnit)
     self:UpdatePower(row, targetUnit)
 end
@@ -4326,6 +4436,10 @@ function BGE:HandlePlateAdded(unit)
     end
 
     row.unit = unit
+	row.UnitIDs = row.UnitIDs or {}
+	row.UnitIDs.Nameplate = unit
+	row.unitID = unit
+	row._unitIDKind = "Nameplate"
     DPrint("PLATEBIND_" .. tostring(unit),
         "PLATEBIND unit=" .. tostring(unit) ..
         " rowName=" .. tostring(row.name or "nil") ..
@@ -4407,6 +4521,13 @@ function BGE:HandlePlateRemoved(unit)
 
     -- Do NOT wipe. Keep last known identity/bars and just fade until it returns.
     row.unit = nil
+	if row.UnitIDs then
+		row.UnitIDs.Nameplate = nil
+	end
+	row.unitID = nil
+	if self.ResolveEnemyPrimaryUnitID then
+		self:ResolveEnemyPrimaryUnitID(row)
+	end
     row._barsUnit = nil
     row._hpSB = nil
     row._pwrSB = nil
