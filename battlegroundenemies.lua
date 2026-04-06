@@ -4215,10 +4215,15 @@ function BGE:ScanTargets()
 
     -- Primary personal sources
     n = n + 1; units[n] = "target"
+    n = n + 1; units[n] = "targettarget"
     n = n + 1; units[n] = "focus"
+    n = n + 1; units[n] = "focustarget"
     n = n + 1; units[n] = "mouseover"
+    n = n + 1; units[n] = "mouseovertarget"
+    n = n + 1; units[n] = "pettarget"
     if UnitExists("softenemy") or (UnitGUID and pcall(UnitGUID, "softenemy")) then
         n = n + 1; units[n] = "softenemy"
+        n = n + 1; units[n] = "softenemytarget"
     end
 
     -- In long fights, this function can become steady overhead.
@@ -4248,6 +4253,8 @@ function BGE:ScanTargets()
                 if idx > m then idx = idx - m end
                 n = n + 1
                 units[n] = "raid" .. idx .. "target"
+                n = n + 1
+                units[n] = "raid" .. idx .. "pettarget"
             end
             self._scanGroupCursor = startIdx + perTick
         end
@@ -4262,6 +4269,8 @@ function BGE:ScanTargets()
                 if idx > m then idx = idx - m end
                 n = n + 1
                 units[n] = "party" .. idx .. "target"
+                n = n + 1
+                units[n] = "party" .. idx .. "pettarget"
             end
             self._scanGroupCursor = startIdx + perTick
         end
@@ -4275,13 +4284,13 @@ function BGE:ScanTargets()
             local row = self:GetRowForExternalUnit(u)
             if row then
                 local sourceKey = "GroupTarget"
-                if u == "target" then
+                if u == "target" or u == "targettarget" or u == "pettarget" then
                     sourceKey = "Target"
-                elseif u == "focus" then
+                elseif u == "focus" or u == "focustarget" then
                     sourceKey = "Focus"
-                elseif u == "mouseover" then
+                elseif u == "mouseover" or u == "mouseovertarget" then
                     sourceKey = "Mouseover"
-                elseif u == "softenemy" then
+                elseif u == "softenemy" or u == "softenemytarget" then
                     sourceKey = "SoftEnemy"
                 end
 
