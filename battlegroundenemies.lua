@@ -825,29 +825,48 @@ ClearUnitCollision = function(self, unit, keepRow)
     local other = self.rowByUnit[unit]
     if not other or other == keepRow then return end
 
-    -- Unmap the other row from this recycled unit token
-    other.unit = nil
-
-    -- If this row tracks multi-source unit IDs, remove the nameplate source too
-    if other.UnitIDs then
-        other.UnitIDs.Nameplate = nil
+    -- Unmap the other row from this recycled unit token (nameplateN)
+    if other.unit == unit then
+        other.unit = nil
+    else
+        -- Defensive: even if out-of-sync, we still drop secure/unit binding for safety.
+        other.unit = nil
     end
+
+    -- IMPORTANT: clear multi-source identity for this token
+    if other.UnitIDs then
+        if other.UnitIDs.Nameplate == unit then
+            other.UnitIDs.Nameplate = nil
+        end
+        -- Defensive: if someone ever stored unit.."target" incorrectly here, drop it too.
+        local derivedTarget = unit .. "target"
+        if other.UnitIDs.NameplateTarget == derivedTarget then
+            other.UnitIDs.NameplateTarget = nil
+        end
+    end
+
     other.unitID = nil
     other._unitIDKind = nil
-
-    -- Re-resolve from remaining sources (target/focus/raidtarget/etc)
     if self.ResolveEnemyPrimaryUnitID then
         self:ResolveEnemyPrimaryUnitID(other)
     end
 
-    -- Drop all cached statusbar pointers (nameplates recycle frames)
+    -- Clear cached plate bars (frames get recycled)
     other._barsUnit = nil
     other._hpSB = nil
     other._pwrSB = nil
     other._hpSBAt = nil
     other._pwrSBAt = nil
 
-    self.rowByUnit[unit] = nil
+    -- Remove reverse mapping
+    if self.rowByUnit[unit] == other then
+        self.rowByUnit[unit] = nil
+    end
+
+    -- Clear any deferred secure unit binding for this row
+    if self.pendingUnitByRow then
+        self.pendingUnitByRow[other] = nil
+    end
 
     if not InLockdown() then
         pcall(other.SetAttribute, other, "unit", nil)
@@ -3704,19 +3723,20 @@ function BGE:PollLiveBars()
         end
     end
 
-	for i = 1, self.maxPlates do
-		local row = self.rows[i]
-		if row then
-			local unit = row.unit
-			if (not unit) and self.ResolveEnemyPrimaryUnitID then
-				unit = self:ResolveEnemyPrimaryUnitID(row)
-			end
-			if unit and UnitExists(unit) and not UnitIsFriend("player", unit) then
-				self:UpdateHealth(row, unit)
-				self:UpdatePower(row, unit)
-			end
-		end
-	end
+    for i = 1, self.maxPlates do
+        local row = self.rows[i]
+        if row then
+            local unit = row.unit
+            if (not unit) and self.ResolveEnemyPrimaryUnitID then
+                unit = self:ResolveEnemyPrimaryUnitID(row)
+            end
+            if unit and UnitExists(unit) and not UnitIsFriend("player", unit) then
+                -- These will fall back to reading the nameplate StatusBars when Unit* APIs are blocked.
+                self:UpdateHealth(row, unit)
+                self:UpdatePower(row, unit)
+            end
+        end
+    end
 end
 
 function BGE:UpdateHealth(row, unit)
