@@ -827,11 +827,26 @@ ClearUnitCollision = function(self, unit, keepRow)
 
     -- Unmap the other row from this recycled unit token
     other.unit = nil
+
+    -- If this row tracks multi-source unit IDs, remove the nameplate source too
+    if other.UnitIDs then
+        other.UnitIDs.Nameplate = nil
+    end
+    other.unitID = nil
+    other._unitIDKind = nil
+
+    -- Re-resolve from remaining sources (target/focus/raidtarget/etc)
+    if self.ResolveEnemyPrimaryUnitID then
+        self:ResolveEnemyPrimaryUnitID(other)
+    end
+
+    -- Drop all cached statusbar pointers (nameplates recycle frames)
     other._barsUnit = nil
     other._hpSB = nil
     other._pwrSB = nil
     other._hpSBAt = nil
     other._pwrSBAt = nil
+
     self.rowByUnit[unit] = nil
 
     if not InLockdown() then
@@ -2697,31 +2712,32 @@ function BGE:SeedRowsFromScoreboard()
                 self:UpdateHealth(row, u)
                 self:UpdatePower(row, u)
             else
-                -- If we already have a working alt unit (raidXtarget), keep it instead of dropping the binding.
-                if row._altUnit and UnitExists(row._altUnit) then
-                    row.unit = row._altUnit
-                    row.UnitIDs = row.UnitIDs or {}
-                    row.UnitIDs.GroupTarget = row._altUnit
-                    row.unitID = row._altUnit
-                    row._unitIDKind = "GroupTarget"
-                    self.rowByUnit[row._altUnit] = row
-                    if not InLockdown() then
-                        row:SetAttribute("unit", row._altUnit)
-                    else
-                        self.pendingUnitByRow[row] = row._altUnit
-                    end
-                    self:UpdateHealth(row, row._altUnit)
-                    self:UpdatePower(row, row._altUnit)
-                else
-                    row.unit = nil
-                    if row.UnitIDs then
-                        row.UnitIDs.Nameplate = nil
-                    end
-                    row.unitID = nil
-                    if not InLockdown() then
-                        row:SetAttribute("unit", nil)
-                    end
-                end
+				-- If we already have a working alt unit (raidXtarget), keep it ONLY as an alternate source.
+				-- Never put unstable tokens into row.unit or rowByUnit.
+				if row._altUnit and UnitExists(row._altUnit) and (not UnitIsFriend("player", row._altUnit)) then
+					-- Validate that the alt token still refers to this row's player (GUID match when possible)
+					local okMatch = true
+					if UnitStillMatchesRow then
+						okMatch = UnitStillMatchesRow(self, row, row._altUnit)
+					end
+				
+					if okMatch then
+						row.UnitIDs = row.UnitIDs or {}
+						row.UnitIDs.GroupTarget = row._altUnit
+						self:ResolveEnemyPrimaryUnitID(row)
+				
+						-- You may still “snap” update bars, but do not bind secure targeting to it.
+						self:UpdateHealth(row, row._altUnit)
+						self:UpdatePower(row, row._altUnit)
+					else
+						-- Token drifted; drop it.
+						row._altUnit = nil
+						if row.UnitIDs then row.UnitIDs.GroupTarget = nil end
+						self:ResolveEnemyPrimaryUnitID(row)
+					end
+				else
+					if row.UnitIDs then row.UnitIDs.GroupTarget = nil end
+				end
             end
 
             -- GUID->row lookup
@@ -3688,15 +3704,19 @@ function BGE:PollLiveBars()
         end
     end
 
-    for i = 1, self.maxPlates do
-        local row = self.rows[i]
-        local unit = row and row.unit
-        if row and unit and UnitExists(unit) and not UnitIsFriend("player", unit) then
-            -- These will fall back to reading the nameplate StatusBars when Unit* APIs are blocked.
-            self:UpdateHealth(row, unit)
-            self:UpdatePower(row, unit)
-        end
-    end
+	for i = 1, self.maxPlates do
+		local row = self.rows[i]
+		if row then
+			local unit = row.unit
+			if (not unit) and self.ResolveEnemyPrimaryUnitID then
+				unit = self:ResolveEnemyPrimaryUnitID(row)
+			end
+			if unit and UnitExists(unit) and not UnitIsFriend("player", unit) then
+				self:UpdateHealth(row, unit)
+				self:UpdatePower(row, unit)
+			end
+		end
+	end
 end
 
 function BGE:UpdateHealth(row, unit)
@@ -4047,14 +4067,36 @@ function BGE:ResolveEnemyPrimaryUnitID(row)
     if not row or not row.UnitIDs then return nil end
 
     local bestKey, bestUnit, bestRank = nil, nil, 999
+
     for key, unitID in pairs(row.UnitIDs) do
         if type(unitID) == "string" and unitID ~= "" and UnitExists(unitID) and not UnitIsFriend("player", unitID) then
-            local rank = EnemyUnitPriorityValue(key)
-            if rank < bestRank then
-                bestRank = rank
-                bestKey = key
-                bestUnit = unitID
+            local okMatch = true
+
+            -- For nameplates: use the existing sturdy matcher (GUID first, then display name)
+            if UnitStillMatchesRow and IsNameplateUnit and IsNameplateUnit(unitID) then
+                okMatch = UnitStillMatchesRow(self, row, unitID)
+
+            -- For non-nameplate sources: validate GUID when we have one
+            elseif row.guid and SafeUnitGUID then
+                local g = SafeUnitGUID(unitID)
+                if g and g ~= row.guid then
+                    okMatch = false
+                end
             end
+
+            if not okMatch then
+                row.UnitIDs[key] = nil
+            else
+                local rank = EnemyUnitPriorityValue(key)
+                if rank < bestRank then
+                    bestRank = rank
+                    bestKey = key
+                    bestUnit = unitID
+                end
+            end
+        else
+            -- Purge dead or friendly tokens
+            row.UnitIDs[key] = nil
         end
     end
 
@@ -4064,14 +4106,53 @@ function BGE:ResolveEnemyPrimaryUnitID(row)
 end
 
 function BGE:UpdateEnemyUnitID(row, key, value)
-    if not row then return end
+    if not row or not key then return end
     row.UnitIDs = row.UnitIDs or {}
 
-    if value and UnitExists(value) and not UnitIsFriend("player", value) then
-        row.UnitIDs[key] = value
-    else
-        row.UnitIDs[key] = nil
+    -- Track which row currently "owns" a unit token like target/focus/raidNtarget
+    self._unitTokenOwner = self._unitTokenOwner or {}
+
+    -- Remove old ownership mapping for this key on this row
+    local old = row.UnitIDs[key]
+    if old and self._unitTokenOwner[old] and self._unitTokenOwner[old].row == row and self._unitTokenOwner[old].key == key then
+        self._unitTokenOwner[old] = nil
     end
+
+    -- Clear
+    if not value or value == "" or (not UnitExists(value)) or UnitIsFriend("player", value) then
+        row.UnitIDs[key] = nil
+        self:ResolveEnemyPrimaryUnitID(row)
+        return
+    end
+
+    -- Reject obvious token drift when GUID is available
+    if row.guid and SafeUnitGUID then
+        local g = SafeUnitGUID(value)
+        if g and g ~= row.guid then
+            return
+        end
+    end
+
+    -- If another row already owns this token, revoke it there immediately
+    local owner = self._unitTokenOwner[value]
+    if owner and owner.row and owner.row ~= row then
+        if owner.row.UnitIDs then
+            owner.row.UnitIDs[owner.key] = nil
+        end
+        if owner.row._altUnit == value then
+            owner.row._altUnit = nil
+        end
+        if owner.row.unitID == value then
+            owner.row.unitID = nil
+            owner.row._unitIDKind = nil
+        end
+        if self.ResolveEnemyPrimaryUnitID then
+            self:ResolveEnemyPrimaryUnitID(owner.row)
+        end
+    end
+
+    self._unitTokenOwner[value] = { row = row, key = key }
+    row.UnitIDs[key] = value
 
     self:ResolveEnemyPrimaryUnitID(row)
 end
