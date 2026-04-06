@@ -2430,6 +2430,7 @@ function BGE:SeedRowsFromScoreboard()
     -- BG only (arena uses arena1..arena5)
     if self._mode == "arena" then return end
     if not IsInPVPInstance() then return end
+    if self._scoreLocked or self:IsMatchStarted() then return end
 
     -- Throttle: UPDATE_BATTLEFIELD_SCORE can fire very frequently in busy fights.
     local now = GetTime()
@@ -2969,9 +2970,17 @@ function BGE:StartScoreWarmup()
 
         -- Stop warmup as soon as the match starts (scoreboard becomes unreliable/secret).
         if self:IsMatchStarted() then
-            self._scoreLocked = true
-            self:StopScoreWarmup()
-            return
+            local rosterN = (self.roster and #self.roster) or 0
+            local enteredAt = self._enteredBGAt or GetTime()
+            local age = GetTime() - enteredAt
+
+            -- If we never got an opening seed, keep trying briefly after gates open.
+            -- Otherwise the frame can stay as just the background forever.
+            if rosterN > 0 or age >= 12 then
+                self._scoreLocked = true
+                self:StopScoreWarmup()
+                return
+            end
         end
 
         -- If match started and everything is resolved AND we have filled our display capacity, stop.
