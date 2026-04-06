@@ -2612,6 +2612,19 @@ function BGE:SeedRowsFromScoreboard()
             -- Only reset binding when this row represents a different player.
             if identityChanged then
                 row.unit = nil
+                row.unitID = nil
+				row._unitIDKind = nil
+				row._altUnit = nil
+				row._altSeenAt = nil
+				if row.UnitIDs then
+					row.UnitIDs.Nameplate = nil
+					row.UnitIDs.Target = nil
+					row.UnitIDs.Focus = nil
+					row.UnitIDs.Mouseover = nil
+					row.UnitIDs.SoftEnemy = nil
+					row.UnitIDs.GroupTarget = nil
+					row.UnitIDs.NameplateTarget = nil
+				end
                 if not InLockdown() then
                     row:SetAttribute("unit", nil)
                 end
