@@ -117,6 +117,15 @@ local function DPrint(key, msg)
     print("|cffb69e86[RSTATS-BGE]|r " .. msg)
 end
 
+local function DPrintMissing(key, msg)
+    if not GetSetting("bgeDebug", false) then return end
+    local now = GetTime()
+    local last = BGE._dbgLast[key] or 0
+    if (now - last) < 3.0 then return end
+    BGE._dbgLast[key] = now
+    print("|cffb69e86[RSTATS-BGE]|r " .. msg)
+end
+
 local function PrintTeamRosterDidNotFill()
     print("|cffb69e86Rated Stats:|r |cffffffffEnemy frames cannot be shown. Your team roster did not fully load, or you reloaded / entered mid-match. This is a WoW limitation not the AddOn. Hiding frame now.|r")
 end
@@ -2767,12 +2776,6 @@ function BGE:SeedRowsFromScoreboard()
             -- PID map (unique-only)
             local pid = CalculatePIDFull(row.raceID, row.classID, row.level, row.faction, row.sex, row.honorLevel)
             row.pid = pid
-            DPrint("SEEDPID_" .. tostring(i),
-                "SEED row["..i.."] name="..tostring(row.name or "nil")..
-                " pid="..tostring(pid)..
-                " roleAssignedRaw="..tostring(rec.roleAssignedRaw)..
-                " role="..tostring(rec.role)..
-                " specID="..tostring(rec.specID))
             if pid and pid > 0 then
                 local c = (self.pidCounts[pid] or 0) + 1
                 self.pidCounts[pid] = c
@@ -2845,13 +2848,6 @@ function BGE:SeedRowsFromScoreboard()
 
     self._seededThisBG = true
     self._seedCount = max
-
-    self:DebugSeededGuidKeys(max)
-    if GetSetting("bgeDebug", false) then
-        local nPid = 0
-        for _ in pairs(self.rowByPID or {}) do nPid = nPid + 1 end
-        DPrint("SEEDPID", "SEED rowByPID.count=" .. tostring(nPid))
-    end
 
     -- After reseed, immediately bind any visible nameplates to rows.
     self:ScanNameplatesForGuidBindings()
@@ -3432,15 +3428,6 @@ function BGE:UpdateRowVisibilities()
                 ApplyClassAlpha(row, CLASS_ALPHA_ACTIVE)
                 row:SetAlpha(ROW_ALPHA_ACTIVE)
             elseif row._seenIdentity then
-                if GetSetting("bgeDebug", false) then
-                    DPrint("ROWVIS_" .. tostring(i),
-                        "ROWVIS i=" .. tostring(i) ..
-                        " name=" .. tostring(row.name or "nil") ..
-                        " unit=" .. tostring(row.unit or "nil") ..
-                        " alt=" .. tostring(row._altUnit or "nil") ..
-                        " seen=" .. tostring(row._seenIdentity and true or false) ..
-                        " hpText=" .. tostring((row.hpText and row.hpText.GetText and row.hpText:GetText()) or "nil"))
-                end
                 -- If this unit is dead, dim it (dead should not look fully active).
                 local isDead = false
                 if row.unit and UnitExists(row.unit) and UnitIsDeadOrGhost then
@@ -3734,6 +3721,28 @@ function BGE:PollLiveBars()
                 -- These will fall back to reading the nameplate StatusBars when Unit* APIs are blocked.
                 self:UpdateHealth(row, unit)
                 self:UpdatePower(row, unit)
+                if GetSetting("bgeDebug", false) and IsNameplateUnit(unit) and not FontStringHasText(row.hpText) then
+                    DPrintMissing("POLLNOHP_" .. tostring(row.fullName or row.name or i),
+                        "POLLNOHP row=" .. tostring(row.fullName or row.name or "nil") ..
+                        " unit=" .. tostring(unit) ..
+                        " resolved=" .. tostring((self.ResolveEnemyPrimaryUnitID and self:ResolveEnemyPrimaryUnitID(row)) or "nil") ..
+                        " unitIDKind=" .. tostring(row._unitIDKind or "nil")
+                    )
+                end
+            end
+        end
+    end
+    if GetSetting("bgeDebug", false) then
+        for i = 1, self.maxPlates do
+            local row = self.rows[i]
+            if row and row._seenIdentity and not row._preview then
+                local resolved = self.ResolveEnemyPrimaryUnitID and self:ResolveEnemyPrimaryUnitID(row) or nil
+                if not row.unit and not resolved and not FontStringHasText(row.hpText) then
+                    DPrintMissing("ORPHANROW_" .. tostring(row.fullName or row.name or i),
+                        "ORPHANROW row=" .. tostring(row.fullName or row.name or "nil") ..
+                        " unit=nil resolved=nil alt=" .. tostring(row._altUnit or "nil")
+                    )
+                end
             end
         end
     end
@@ -4484,34 +4493,18 @@ function BGE:HandlePlateAdded(unit)
         end
     end
 
-    if GetSetting("bgeDebug", false) then
-        local pidStrong = (UnitPID and UnitPID(unit)) or 0
-        local pid = UnitPIDSeedCompat(unit)
-        DPrint("PIDCHK_" .. unit,
-            "PIDCHK unit=" .. unit ..
-            " pid=" .. tostring(pid) ..
-            " strong=" .. tostring(pidStrong) ..
-            " seeded=" .. Bool01(self.rowByPID and self.rowByPID[pid] ~= nil)
-        )
-    end
-
-    if GetSetting("bgeDebug", false) then
-        local dispFull = select(1, GetNameplateDisplayNames(unit))
-        local pidNow = UnitPIDSeedCompat(unit)
-        local pidStrong2 = (UnitPID and UnitPID(unit)) or 0
-        DPrint("PLATE_LOOKUP_" .. unit,
-            "LOOKUP_PLATE unit=" .. unit ..
-            " by=" .. lookedUpBy ..
-            " disp=" .. (dispFull or "nil") ..
-            " guidKey=" .. (SafeToString(guid) or "<secret>") ..
-            " pid=" .. tostring(pidNow) ..
-            " pidS=" .. tostring(pidStrong2) ..
-            " hit=" .. Bool01(row ~= nil)
-        )
-    end
-
     if not row then
-        DebugUnitSnapshot("PLATE_ADDED_UNSEEDED", unit)
+        if GetSetting("bgeDebug", false) then
+            local dispFull, dispBase = GetNameplateDisplayNames(unit)
+            DPrintMissing("MISSBIND_" .. unit,
+                "MISSBIND unit=" .. tostring(unit) ..
+                " dispFull=" .. tostring(dispFull or "nil") ..
+                " dispBase=" .. tostring(dispBase or "nil") ..
+                " guid=" .. tostring(SafeUnitGUID(unit) or "nil") ..
+                " pid=" .. tostring(UnitPIDSeedCompat(unit) or 0) ..
+                " pidLoose=" .. tostring(UnitPIDLooseSeedCompat(unit) or 0)
+            )
+        end
 
         -- Nameplate units recycle; don't poison retries for a new occupant.
         do
@@ -4582,11 +4575,6 @@ function BGE:HandlePlateAdded(unit)
 	row.UnitIDs.Nameplate = unit
 	row.unitID = unit
 	row._unitIDKind = "Nameplate"
-    DPrint("PLATEBIND_" .. tostring(unit),
-        "PLATEBIND unit=" .. tostring(unit) ..
-        " rowName=" .. tostring(row.name or "nil") ..
-        " fullName=" .. tostring(row.fullName or "nil") ..
-        " by=" .. tostring(lookedUpBy or "nil"))
     row._preview = false
     row._outOfRange = false
     row._seeded = nil
@@ -4611,15 +4599,20 @@ function BGE:HandlePlateAdded(unit)
     self:UpdatePower(row, unit)
     ApplyClassAlpha(row, CLASS_ALPHA_ACTIVE)
 
-    DebugUnitSnapshot("PLATE_ADDED", unit)
-
     local needRetry = (not row.name) or (not row.classFile) or (not FontStringHasText(row.hpText))
+    if GetSetting("bgeDebug", false) and not FontStringHasText(row.hpText) then
+        DPrintMissing("BINDNOHP_" .. tostring(row.fullName or row.name or unit),
+            "BINDNOHP unit=" .. tostring(unit) ..
+            " row=" .. tostring(row.fullName or row.name or "nil") ..
+            " by=" .. tostring(lookedUpBy or "nil") ..
+            " resolved=" .. tostring((self.ResolveEnemyPrimaryUnitID and self:ResolveEnemyPrimaryUnitID(row)) or "nil")
+        )
+    end
     if needRetry and C_Timer and C_Timer.After then
         local u = unit
         local r = row
         C_Timer.After(0.5, function()
             if r and r.unit == u and UnitExists(u) then
-                DebugUnitSnapshot("PLATE_T+0.5", u)
                 if not r.name or not r.classFile or not FontStringHasText(r.hpText) then
                     self:UpdateIdentity(r, u)
                     self:UpdateHealth(r, u)
@@ -4629,7 +4622,6 @@ function BGE:HandlePlateAdded(unit)
         end)
         C_Timer.After(1, function()
             if r and r.unit == u and UnitExists(u) then
-                DebugUnitSnapshot("PLATE_T+0.1", u)
                 if not r.name then
                     self:UpdateIdentity(r, u)
                 end
