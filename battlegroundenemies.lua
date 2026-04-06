@@ -4682,6 +4682,10 @@ function BGE:HandleUnitUpdate(unit, what, force)
     if not row then return end
     if not row.unit and IsNameplateUnit(unit) then
         row.unit = unit
+        row.UnitIDs = row.UnitIDs or {}
+        row.UnitIDs.Nameplate = unit
+        row.unitID = unit
+        row._unitIDKind = "Nameplate"
     end
 
     if what == "NAME" then
