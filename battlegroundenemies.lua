@@ -4455,6 +4455,7 @@ function BGE:HandlePlateAdded(unit)
             if okRow and hit then
                 row = hit
                 lookedUpBy = "dispFull"
+                hadStrongIdentity = true
             end
         end
 
@@ -4464,6 +4465,7 @@ function BGE:HandlePlateAdded(unit)
             if okRow and hit then
                 row = hit
                 lookedUpBy = "dispBase"
+                hadStrongIdentity = true
             end
         end
     end
@@ -4511,7 +4513,7 @@ function BGE:HandlePlateAdded(unit)
 
         -- Mercenary fallback: in merc mode the nameplate race may not match the scoreboard race.
         -- Try a no-race PID, but only if it yields a unique hit (map is unique-only).
-        if (not row) and UnitIsMercenary and UnitIsMercenary(unit) and self.rowByPIDNoRace then
+        if hadStrongIdentity and (not row) and UnitIsMercenary and UnitIsMercenary(unit) and self.rowByPIDNoRace then
             local pidNR = UnitPIDNoRaceSeedCompat(unit)
             if pidNR and pidNR > 0 then
                 local okRowNR, hitNR = pcall(function() return self.rowByPIDNoRace[pidNR] end)
@@ -4524,7 +4526,7 @@ function BGE:HandlePlateAdded(unit)
 
         -- Cross-faction/visual race can mismatch even when not flagged as Mercenary.
         -- Keep this conservative: only when honor is actually populated.
-        if (not row) and self.rowByPIDNoRace and UnitIsPlayer(unit) and (not UnitIsFriend("player", unit)) and honor > 0 then
+        if hadStrongIdentity and (not row) and self.rowByPIDNoRace and UnitIsPlayer(unit) and (not UnitIsFriend("player", unit)) and honor > 0 then
             local pidNR2 = UnitPIDNoRaceSeedCompat(unit)
             if pidNR2 and pidNR2 > 0 then
                 local okRowNR2, hitNR2 = pcall(function() return self.rowByPIDNoRace[pidNR2] end)
@@ -4536,7 +4538,7 @@ function BGE:HandlePlateAdded(unit)
         end
 
         -- Loose PID fallback: this is specifically the weak-data / honor-zero fallback.
-        if (not row) and self.rowByPIDLoose then
+        if hadStrongIdentity and (not row) and self.rowByPIDLoose then
             local okC, _, _, classID = pcall(UnitClass, unit)
             if okC and classID then
                 local pidL = UnitPIDLooseSeedCompat(unit)
