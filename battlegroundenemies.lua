@@ -3749,7 +3749,9 @@ function BGE:PollLiveBars()
                 if not row.unit and not resolved and not FontStringHasText(row.hpText) then
                     DPrintMissing("ORPHANROW_" .. tostring(row.fullName or row.name or i),
                         "ORPHANROW row=" .. tostring(row.fullName or row.name or "nil") ..
-                        " unit=nil resolved=nil alt=" .. tostring(row._altUnit or "nil")
+                        " unit=nil resolved=nil groupTarget=" .. tostring((row.UnitIDs and row.UnitIDs.GroupTarget) or "nil") ..
+                        " alt=" .. tostring(row._altUnit or "nil") ..
+                        " unitIDKind=" .. tostring(row._unitIDKind or "nil")
                     )
                 end
             end
