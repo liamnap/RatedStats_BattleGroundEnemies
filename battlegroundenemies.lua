@@ -93,7 +93,6 @@ local UpdateNameClipToHPFill
 local SafeUnitGUID
 local GetNameplateDisplayNames
 local UnitPID
-local CalculatePID
 local SafeStatusBarValues
 local NormalizeFactionIndex
 local UnitStillMatchesRow
@@ -614,15 +613,6 @@ NormalizeFactionIndex = function(v)
     if s == "Alliance" then return 1 end
     if s == "Horde" then return 0 end
     return nil
-end
-
-CalculatePID = function(classID, factionIndex, honorLevel)
-    -- Legacy signature kept only to avoid hard-crashing if something calls it.
-    -- Prefer the expanded signature below.
-    classID = tonumber(classID) or 0
-    factionIndex = tonumber(factionIndex) or 0
-    honorLevel = tonumber(honorLevel) or 0
-    return (classID * 1000000) + (factionIndex * 100000) + honorLevel
 end
 
 local function CalculatePIDFull(raceID, classID, level, factionIndex, sex, honorLevel)
@@ -3997,7 +3987,7 @@ function BGE:GetRowForExternalUnit(unitID)
         if okRow and hit then return hit end
     end
 
-    -- 3) PID maps (strong match first, then loose)
+    -- 3) PID map (seed-compatible strong match)
     if self.rowByPID then
         local pid = UnitPIDSeedCompat(unitID)
         if pid and pid > 0 then
