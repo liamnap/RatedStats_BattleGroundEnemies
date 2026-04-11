@@ -2770,32 +2770,9 @@ function BGE:SeedRowsFromScoreboard()
                 self:UpdateHealth(row, u)
                 self:UpdatePower(row, u)
             else
-				-- If we already have a working alt unit (raidXtarget), keep it ONLY as an alternate source.
-				-- Never put unstable tokens into row.unit or rowByUnit.
-				if row._altUnit and UnitExists(row._altUnit) and (not UnitIsFriend("player", row._altUnit)) then
-					-- Validate that the alt token still refers to this row's player (GUID match when possible)
-					local okMatch = true
-					if UnitStillMatchesRow then
-						okMatch = UnitStillMatchesRow(self, row, row._altUnit)
-					end
-				
-					if okMatch then
-						row.UnitIDs = row.UnitIDs or {}
-						row.UnitIDs.GroupTarget = row._altUnit
-						self:ResolveEnemyPrimaryUnitID(row)
-				
-						-- You may still “snap” update bars, but do not bind secure targeting to it.
-						self:UpdateHealth(row, row._altUnit)
-						self:UpdatePower(row, row._altUnit)
-					else
-						-- Token drifted; drop it.
-						row._altUnit = nil
-						if row.UnitIDs then row.UnitIDs.GroupTarget = nil end
-						self:ResolveEnemyPrimaryUnitID(row)
-					end
-				else
-					if row.UnitIDs then row.UnitIDs.GroupTarget = nil end
-				end
+				if row.UnitIDs then
+                    self:ResolveEnemyPrimaryUnitID(row)
+                end
             end
 
             -- GUID->row lookup
@@ -3456,11 +3433,6 @@ function BGE:UpdateRowVisibilities()
     for i = 1, self.maxPlates do
         local row = self.rows[i]
         if row then
-            -- If an alt unit token goes stale, drop it so OOR logic behaves.
-            if row._altUnit and (not UnitExists(row._altUnit) or UnitIsFriend("player", row._altUnit)) then
-                row._altUnit = nil
-            end
-
             if row._preview then
                 row._outOfRange = false
                 ApplyClassAlpha(row, CLASS_ALPHA_ACTIVE)
@@ -3732,30 +3704,14 @@ function BGE:PollLiveBars()
     if not self.rows then return end
 
     -- Late nameplates / delayed scoreboard-name availability:
-    -- re-run the full plate binder, not the reduced GUID scan.
-    -- HandlePlateAdded has extra fallback paths that ScanNameplatesForGuidBindings does not.
+    -- do a light rebinding sweep only. Do NOT re-run HandlePlateAdded() here,
+    -- because the poller must not keep re-binding live nameplate tokens.
     do
         local now = GetTime()
         local last = self._lastLiveBindScanAt or 0
         if (now - last) >= 1.0 then
             self._lastLiveBindScanAt = now
-            for i = 1, (self.maxPlates or 40) do
-                local u = "nameplate" .. tostring(i)
-                if UnitExists(u) and not UnitIsFriend("player", u) then
-                    -- Do NOT re-run the full weak-PID binder on tokens we already own.
-                    -- That causes nameplateX to be stolen from one row and rebound to another row,
-                    -- which produces the ORPHANROW churn seen in debug.
-                    if not (self.rowByUnit and self.rowByUnit[u]) then
-                        self:HandlePlateAdded(u)
-                    else
-                        local row = self.rowByUnit[u]
-                        if row then
-                            self:UpdateHealth(row, u)
-                            self:UpdatePower(row, u)
-                        end
-                    end
-                end
-            end
+            self:ScanNameplatesForGuidBindings()
         end
     end
 
@@ -3790,7 +3746,6 @@ function BGE:PollLiveBars()
                     DPrintMissing("ORPHANROW_" .. tostring(row.fullName or row.name or i),
                         "ORPHANROW row=" .. tostring(row.fullName or row.name or "nil") ..
                         " unit=nil resolved=nil groupTarget=" .. tostring((row.UnitIDs and row.UnitIDs.GroupTarget) or "nil") ..
-                        " alt=" .. tostring(row._altUnit or "nil") ..
                         " unitIDKind=" .. tostring(row._unitIDKind or "nil")
                     )
                 end
@@ -4354,8 +4309,6 @@ function BGE:ScanTargets()
                     sourceKey = "SoftEnemy"
                 end
 
-                row._altUnit = u
-                row._altSeenAt = GetTime()
                 self:UpdateEnemyUnitID(row, sourceKey, u)
                 self:UpdateHealth(row, u)
                 self:UpdatePower(row, u)
@@ -4391,8 +4344,6 @@ function BGE:HandleUnitTargetChanged(srcUnit)
     local row = self:GetRowForExternalUnit(targetUnit)
     if not row then return end
 
-    row._altUnit = targetUnit
-    row._altSeenAt = GetTime()
     self:UpdateEnemyUnitID(row, "GroupTarget", targetUnit)
     self:UpdateHealth(row, targetUnit)
     self:UpdatePower(row, targetUnit)
@@ -4827,7 +4778,6 @@ function BGE:HandleUnitUpdate(unit, what, force)
                     end
                 else
                     -- Don't bind secure click-to-target to unstable tokens like raid1target/party1target.
-                    row._altUnit = unit
                     local sourceKey = "GroupTarget"
                     if unit == "target" then
                         sourceKey = "Target"
