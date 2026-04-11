@@ -3828,6 +3828,20 @@ function BGE:UpdateHealth(row, unit)
         secretNums = false
     end
 
+    if (not cur or not maxv) and GetSetting("bgeDebug", false) and self._mode ~= "arena" then
+        local dbgUnit = readUnit or unit
+        if dbgUnit and IsNameplateUnit(dbgUnit) then
+            DPrintMissing("HPMISS_" .. tostring(row and (row.fullName or row.name or dbgUnit) or dbgUnit),
+                "HPMISS row=" .. tostring(row and (row.fullName or row.name or "nil") or "nil") ..
+                " unit=" .. tostring(unit or "nil") ..
+                " readUnit=" .. tostring(dbgUnit or "nil") ..
+                " row.unit=" .. tostring(row and row.unit or "nil") ..
+                " resolved=" .. tostring((row and self.ResolveEnemyPrimaryUnitID and self:ResolveEnemyPrimaryUnitID(row)) or "nil") ..
+                " barsUnit=" .. tostring(row and row._barsUnit or "nil")
+            )
+        end
+    end
+
     if not cur or not maxv then
         return
     end
