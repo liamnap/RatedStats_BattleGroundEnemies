@@ -3742,7 +3742,18 @@ function BGE:PollLiveBars()
             for i = 1, (self.maxPlates or 40) do
                 local u = "nameplate" .. tostring(i)
                 if UnitExists(u) and not UnitIsFriend("player", u) then
-                    self:HandlePlateAdded(u)
+                    -- Do NOT re-run the full weak-PID binder on tokens we already own.
+                    -- That causes nameplateX to be stolen from one row and rebound to another row,
+                    -- which produces the ORPHANROW churn seen in debug.
+                    if not (self.rowByUnit and self.rowByUnit[u]) then
+                        self:HandlePlateAdded(u)
+                    else
+                        local row = self.rowByUnit[u]
+                        if row then
+                            self:UpdateHealth(row, u)
+                            self:UpdatePower(row, u)
+                        end
+                    end
                 end
             end
         end
