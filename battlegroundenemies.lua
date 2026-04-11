@@ -52,10 +52,6 @@ BGE.fullNameCounts = {}
 BGE.baseNameCounts = {}
 BGE.rowByPID = {}
 BGE.pidCounts = {}
-BGE.rowByPIDNoRace = {}
-BGE.pidNoRaceCounts = {}
-BGE.rowByPIDLoose = {}
-BGE.pidLooseCounts = {}
 BGE.ClassTokenToID = nil
 BGE.RaceNameToID = nil
 BGE.pendingUnitByGuid = {}
@@ -98,7 +94,6 @@ local SafeUnitGUID
 local GetNameplateDisplayNames
 local UnitPID
 local CalculatePID
-local CalculatePIDLoose
 local SafeStatusBarValues
 local NormalizeFactionIndex
 local UnitStillMatchesRow
@@ -335,7 +330,7 @@ function BGE:ScanNameplatesForGuidBindings()
     if not self.rowByUnit then return end
     -- Allow scanning even when GUID map is unavailable (scoreboard locked / secret),
     -- as long as we have *some* seeded map to bind against.
-    if not (self.rowByGuid or self.rowByFullName or self.rowByBaseName or self.rowByPID or self.rowByPIDLoose) then
+    if not (self.rowByGuid or self.rowByFullName or self.rowByBaseName or self.rowByPID) then
         return
     end
 
@@ -383,8 +378,7 @@ function BGE:ScanNameplatesForGuidBindings()
                     " guid=" .. tostring(SafeUnitGUID(unit) or "nil") ..
                     " dispFull=" .. tostring(disp or "nil") ..
                     " dispBase=" .. tostring(dispBase or "nil") ..
-                    " pid=" .. tostring(UnitPIDSeedCompat(unit) or 0) ..
-                    " pidLoose=" .. tostring(UnitPIDLooseSeedCompat(unit) or 0)
+                    " pid=" .. tostring(UnitPIDSeedCompat(unit) or 0)
                 )
             end
 
@@ -631,13 +625,6 @@ CalculatePID = function(classID, factionIndex, honorLevel)
     return (classID * 1000000) + (factionIndex * 100000) + honorLevel
 end
 
-CalculatePIDLoose = function(classID, factionIndex)
-    -- Legacy signature kept only to avoid hard-crashing if something calls it.
-    classID = tonumber(classID) or 0
-    factionIndex = tonumber(factionIndex) or 0
-    return (classID * 1000000) + (factionIndex * 100000)
-end
-
 local function CalculatePIDFull(raceID, classID, level, factionIndex, sex, honorLevel)
     raceID = NormalizeRaceID(raceID)
     classID = tonumber(classID) or 0
@@ -652,19 +639,6 @@ local function CalculatePIDFull(raceID, classID, level, factionIndex, sex, honor
         + (factionIndex * 1000000)
         + (sex * 100000)
         + honorLevel
-end
-
-local function CalculatePIDLooseFull(raceID, classID, level, factionIndex, sex)
-    raceID = NormalizeRaceID(raceID)
-    classID = tonumber(classID) or 0
-    level = tonumber(level) or 0
-    factionIndex = tonumber(factionIndex) or 0
-    sex = tonumber(sex) or 0
-    return (raceID * 100000000000)
-        + (classID * 1000000000)
-        + (level * 10000000)
-        + (factionIndex * 1000000)
-        + (sex * 100000)
 end
 
 function BGE:EnsurePIDMaps()
@@ -721,54 +695,6 @@ UnitPIDSeedCompat = function(unit)
         GetUnitTrueFactionIndex(unit),
         0, -- sex (seed-compatible)
         (okH and honor) or 0
-    )
-end
-
--- Seed-compatible PID that ignores race (mercenary-safe fallback).
--- Mercenary mode can change the *visual* race on nameplates, so UnitRace(unit) may not match the scoreboard race.
--- This is only used as a fallback and only when it yields a unique match.
-UnitPIDNoRaceSeedCompat = function(unit)
-    if not UnitExists(unit) then return 0 end
-    local okC, _, _, classID = pcall(UnitClass, unit)
-    local okH, honor = pcall(UnitHonorLevel, unit)
-    if not okC or not classID then return 0 end
-    return CalculatePIDFull(
-        0, -- race (ignored)
-        classID or 0,
-        0, -- level (seed-compatible)
-        GetUnitTrueFactionIndex(unit),
-        0, -- sex (seed-compatible)
-        (okH and honor) or 0
-    )
-end
-
-UnitPIDLooseSeedCompat = function(unit)
-    if not UnitExists(unit) then return 0 end
-    local okR, _, _, raceID = pcall(UnitRace, unit)
-    local okC, _, _, classID = pcall(UnitClass, unit)
-    if not okC or not classID then return 0 end
-    return CalculatePIDLooseFull(
-        (okR and raceID) or 0,
-        classID or 0,
-        0, -- level (seed-compatible)
-        GetUnitTrueFactionIndex(unit),
-        0  -- sex (seed-compatible)
-    )
-end
-
-local function UnitPIDLoose(unit)
-    if not UnitExists(unit) then return 0 end
-    local okR, _, _, raceID = pcall(UnitRace, unit)
-    local okC, _, _, classID = pcall(UnitClass, unit)
-    local okL, level = pcall(UnitLevel, unit)
-    local okS, sex = pcall(UnitSex, unit)
-    if not okC or not classID then return 0 end
-    return CalculatePIDLooseFull(
-        (okR and raceID) or 0,
-        classID or 0,
-        (okL and level) or 0,
-        GetUnitTrueFactionIndex(unit),
-        (okS and sex) or 0
     )
 end
 
@@ -2635,10 +2561,6 @@ function BGE:SeedRowsFromScoreboard()
     wipe(self.rowByBaseName)
     wipe(self.rowByPID)
     wipe(self.pidCounts)
-    wipe(self.rowByPIDNoRace)
-    wipe(self.pidNoRaceCounts)
-    wipe(self.rowByPIDLoose)
-    wipe(self.pidLooseCounts)
 
     -- Rebuild unit bindings from preserved GUID matches where possible.
     wipe(self.rowByUnit)
@@ -2799,33 +2721,6 @@ function BGE:SeedRowsFromScoreboard()
                     self.rowByPID[pid] = row
                 else
                     self.rowByPID[pid] = nil
-                end
-            end
-
-            -- No-race PID (unique-only) for Mercenary mode fallback.
-            -- In Merc mode, UnitRace(unit) can report the *visual* race, which may not match the scoreboard race.
-            local pidNR = CalculatePIDFull(0, row.classID, row.level, row.faction, row.sex, row.honorLevel)
-            row.pidNoRace = pidNR
-            if pidNR and pidNR > 0 then
-                local cNR = (self.pidNoRaceCounts[pidNR] or 0) + 1
-                self.pidNoRaceCounts[pidNR] = cNR
-                if cNR == 1 then
-                    self.rowByPIDNoRace[pidNR] = row
-                else
-                    self.rowByPIDNoRace[pidNR] = nil
-                end
-            end
-
-            -- Loose PID (no honor) for nameplate units that report honor=0
-            local pidL = CalculatePIDLooseFull(row.raceID, row.classID, row.level, row.faction, row.sex)
-            row.pidLoose = pidL
-            if pidL and pidL > 0 then
-                local cL = (self.pidLooseCounts[pidL] or 0) + 1
-                self.pidLooseCounts[pidL] = cL
-                if cL == 1 then
-                    self.rowByPIDLoose[pidL] = row
-                else
-                    self.rowByPIDLoose[pidL] = nil
                 end
             end
 
@@ -4110,7 +4005,7 @@ function BGE:GetRowForExternalUnit(unitID)
             if okRow and hit then return hit end
         end
     end
-    
+
     return nil
 end
 
@@ -4494,8 +4389,7 @@ function BGE:HandlePlateAdded(unit)
                 " dispFull=" .. tostring(dispFull or "nil") ..
                 " dispBase=" .. tostring(dispBase or "nil") ..
                 " guid=" .. tostring(SafeUnitGUID(unit) or "nil") ..
-                " pid=" .. tostring(UnitPIDSeedCompat(unit) or 0) ..
-                " pidLoose=" .. tostring(UnitPIDLooseSeedCompat(unit) or 0)
+                " pid=" .. tostring(UnitPIDSeedCompat(unit) or 0)
             )
         end
 
