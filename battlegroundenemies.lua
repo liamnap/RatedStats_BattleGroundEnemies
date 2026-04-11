@@ -3747,7 +3747,11 @@ function BGE:PollLiveBars()
             for j = 1, (self.maxPlates or 40) do
                 local u = "nameplate" .. tostring(j)
                 if UnitExists(u) and not UnitIsFriend("player", u) then
-                    self:HandlePlateAdded(u)
+                    -- Prep scan should discover missing binds, not keep stealing
+                    -- already-owned nameplate tokens from other rows.
+                    if not (self.rowByUnit and self.rowByUnit[u]) then
+                        self:HandlePlateAdded(u)
+                    end
                 end
             end
         end
