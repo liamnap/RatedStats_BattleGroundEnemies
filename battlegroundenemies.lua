@@ -3734,15 +3734,22 @@ function BGE:PollLiveBars()
     if not IsInPVPInstance() then return end
     if not self.rows then return end
 
-    -- Late nameplates / delayed scoreboard-name availability:
-    -- do a light rebinding sweep only. Do NOT re-run HandlePlateAdded() here,
-    -- because the poller must not keep re-binding live nameplate tokens.
+    -- Prep phase: be aggressive and run the full opener binder so visible enemy
+    -- nameplates get attached before gates open, without requiring clicks.
+    -- After the match starts, switch back to the lighter scan so we don't churn
+    -- live bindings every tick.
     do
         local now = GetTime()
         local last = self._lastLiveBindScanAt or 0
-        if (now - last) >= 1.0 then
+        local started = self.IsMatchStarted and self:IsMatchStarted()
+        if (not started) and (now - last) >= 0.25 then
             self._lastLiveBindScanAt = now
-            self:ScanNameplatesForGuidBindings()
+            for j = 1, (self.maxPlates or 40) do
+                local u = "nameplate" .. tostring(j)
+                if UnitExists(u) and not UnitIsFriend("player", u) then
+                    self:HandlePlateAdded(u)
+                end
+            end
         end
     end
 
