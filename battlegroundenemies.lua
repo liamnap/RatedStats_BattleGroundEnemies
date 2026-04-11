@@ -819,6 +819,33 @@ UnitStillMatchesRow = function(self, row, unit)
         return true
     end
 
+    -- Weak opener fallback:
+    -- hostile nameplates at BG start often have no usable GUID and no display text yet.
+    -- HandlePlateAdded() can legitimately bind these rows by PID, so the resolver must
+    -- also treat the same PID identity as valid or it will immediately throw the bind away.
+    if row then
+        local pid = UnitPIDSeedCompat and UnitPIDSeedCompat(unit) or 0
+        if pid and pid > 0 and row.pid and pid == row.pid then
+            if self.rowByPID and self.rowByPID[pid] == row then
+                return true
+            end
+        end
+
+        local pidNR = UnitPIDNoRaceSeedCompat and UnitPIDNoRaceSeedCompat(unit) or 0
+        if pidNR and pidNR > 0 and row.pidNoRace and pidNR == row.pidNoRace then
+            if self.rowByPIDNoRace and self.rowByPIDNoRace[pidNR] == row then
+                return true
+            end
+        end
+
+        local pidL = UnitPIDLooseSeedCompat and UnitPIDLooseSeedCompat(unit) or 0
+        if pidL and pidL > 0 and row.pidLoose and pidL == row.pidLoose then
+            if self.rowByPIDLoose and self.rowByPIDLoose[pidL] == row then
+                return true
+            end
+        end
+    end
+
     return false
 end
 
