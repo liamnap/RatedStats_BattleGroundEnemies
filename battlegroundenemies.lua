@@ -375,14 +375,6 @@ function BGE:ScanNameplatesForGuidBindings()
                     row = self.rowByPID[pid]
                     if row then bindBy = "pid" end
                 end
-                -- Seed-compatible loose PID
-                if not row and self.rowByPIDLoose then
-                    local pidL = UnitPIDLooseSeedCompat(unit)
-                    if pidL and pidL > 0 then
-                        row = self.rowByPIDLoose[pidL]
-                        if row then bindBy = "pidLoose" end
-                    end
-                end
             end
 
             if not row then
@@ -860,20 +852,6 @@ UnitStillMatchesRow = function(self, row, unit)
         local pid = UnitPIDSeedCompat and UnitPIDSeedCompat(unit) or 0
         if pid and pid > 0 and row.pid and pid == row.pid then
             if self.rowByPID and self.rowByPID[pid] == row then
-                return true
-            end
-        end
-
-        local pidNR = UnitPIDNoRaceSeedCompat and UnitPIDNoRaceSeedCompat(unit) or 0
-        if pidNR and pidNR > 0 and row.pidNoRace and pidNR == row.pidNoRace then
-            if self.rowByPIDNoRace and self.rowByPIDNoRace[pidNR] == row then
-                return true
-            end
-        end
-
-        local pidL = UnitPIDLooseSeedCompat and UnitPIDLooseSeedCompat(unit) or 0
-        if pidL and pidL > 0 and row.pidLoose and pidL == row.pidLoose then
-            if self.rowByPIDLoose and self.rowByPIDLoose[pidL] == row then
                 return true
             end
         end
@@ -4132,14 +4110,7 @@ function BGE:GetRowForExternalUnit(unitID)
             if okRow and hit then return hit end
         end
     end
-    if self.rowByPIDLoose then
-        local pidL = UnitPIDLooseSeedCompat(unitID)
-        if pidL and pidL > 0 then
-            local okRow, hit = pcall(function() return self.rowByPIDLoose[pidL] end)
-            if okRow and hit then return hit end
-        end
-    end
-
+    
     return nil
 end
 
@@ -4511,47 +4482,6 @@ function BGE:HandlePlateAdded(unit)
             if okRow and hit then
                 row = hit
                 lookedUpBy = "pid"
-            end
-        end
-
-        -- Mercenary fallback: in merc mode the nameplate race may not match the scoreboard race.
-        -- Try a no-race PID, but only if it yields a unique hit (map is unique-only).
-        if hadStrongIdentity and (not row) and UnitIsMercenary and UnitIsMercenary(unit) and self.rowByPIDNoRace then
-            local pidNR = UnitPIDNoRaceSeedCompat(unit)
-            if pidNR and pidNR > 0 then
-                local okRowNR, hitNR = pcall(function() return self.rowByPIDNoRace[pidNR] end)
-                if okRowNR and hitNR then
-                    row = hitNR
-                    lookedUpBy = "pidNoRace"
-                end
-            end
-        end
-
-        -- Cross-faction/visual race can mismatch even when not flagged as Mercenary.
-        -- Keep this conservative: only when honor is actually populated.
-        if hadStrongIdentity and (not row) and self.rowByPIDNoRace and UnitIsPlayer(unit) and (not UnitIsFriend("player", unit)) and honor > 0 then
-            local pidNR2 = UnitPIDNoRaceSeedCompat(unit)
-            if pidNR2 and pidNR2 > 0 then
-                local okRowNR2, hitNR2 = pcall(function() return self.rowByPIDNoRace[pidNR2] end)
-                if okRowNR2 and hitNR2 then
-                    row = hitNR2
-                    lookedUpBy = "pidNoRace2"
-                end
-            end
-        end
-
-        -- Loose PID fallback: this is specifically the weak-data / honor-zero fallback.
-        if hadStrongIdentity and (not row) and self.rowByPIDLoose then
-            local okC, _, _, classID = pcall(UnitClass, unit)
-            if okC and classID then
-                local pidL = UnitPIDLooseSeedCompat(unit)
-                if pidL and pidL > 0 then
-                    local okRowL, hitL = pcall(function() return self.rowByPIDLoose[pidL] end)
-                    if okRowL and hitL then
-                        row = hitL
-                        lookedUpBy = "pidLoose"
-                    end
-                end
             end
         end
     end
