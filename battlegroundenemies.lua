@@ -3773,7 +3773,7 @@ function BGE:PollLiveBars()
             local row = self.rows[i]
             if row and row._seenIdentity and not row._preview then
                 local resolved = self.ResolveEnemyPrimaryUnitID and self:ResolveEnemyPrimaryUnitID(row) or nil
-                if not row.unit and not resolved and not FontStringHasText(row.hpText) then
+                if not row.unit and not resolved then
                     DPrintMissing("ORPHANROW_" .. tostring(row.fullName or row.name or i),
                         "ORPHANROW row=" .. tostring(row.fullName or row.name or "nil") ..
                         " unit=nil resolved=nil groupTarget=" .. tostring((row.UnitIDs and row.UnitIDs.GroupTarget) or "nil") ..
