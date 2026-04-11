@@ -108,8 +108,18 @@ local CreateMainFrame
 -- Debug (throttled)
 BGE._dbgLast = {}
 
+local function DebugAtMatchStartOnly()
+    if not GetSetting("bgeDebug", false) then return false end
+    if not IsInPVPInstance() then return false end
+    if BGE and BGE._mode == "arena" then return false end
+    -- Only during prep / opener. Once match has actually started, stop debug spam.
+    if BGE and BGE.IsMatchStarted and BGE:IsMatchStarted() then return false end
+    return true
+end
+
 local function DPrint(key, msg)
     if not GetSetting("bgeDebug", false) then return end
+    if not DebugAtMatchStartOnly() then return end
     local now = GetTime()
     local last = BGE._dbgLast[key] or 0
     if (now - last) < 1.0 then return end
@@ -119,6 +129,7 @@ end
 
 local function DPrintMissing(key, msg)
     if not GetSetting("bgeDebug", false) then return end
+    if not DebugAtMatchStartOnly() then return end
     local now = GetTime()
     local last = BGE._dbgLast[key] or 0
     if (now - last) < 3.0 then return end
@@ -374,6 +385,17 @@ function BGE:ScanNameplatesForGuidBindings()
                 end
             end
 
+            if not row then
+                DPrintMissing("SCANMISS_" .. unit,
+                    "SCANMISS unit=" .. tostring(unit) ..
+                    " guid=" .. tostring(SafeUnitGUID(unit) or "nil") ..
+                    " dispFull=" .. tostring(disp or "nil") ..
+                    " dispBase=" .. tostring(dispBase or "nil") ..
+                    " pid=" .. tostring(UnitPIDSeedCompat(unit) or 0) ..
+                    " pidLoose=" .. tostring(UnitPIDLooseSeedCompat(unit) or 0)
+                )
+            end
+
             -- Rebind if missing OR stale (nameplates recycle)
             local stale = false
             if row and row.unit and UnitExists(row.unit) then
@@ -428,6 +450,15 @@ function BGE:ScanNameplatesForGuidBindings()
                 self:UpdateIdentity(row, unit)
                 self:UpdateHealth(row, unit)
                 self:UpdatePower(row, unit)
+
+                if not FontStringHasText(row.hpText) then
+                    DPrintMissing("SCANNOHP_" .. tostring(row.fullName or row.name or unit),
+                        "SCANNOHP unit=" .. tostring(unit) ..
+                        " row=" .. tostring(row.fullName or row.name or "nil") ..
+                        " by=" .. tostring(bindBy or "nil") ..
+                        " resolved=" .. tostring((self.ResolveEnemyPrimaryUnitID and self:ResolveEnemyPrimaryUnitID(row)) or "nil")
+                    )
+                end
             end
         end
     end
