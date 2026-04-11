@@ -820,9 +820,11 @@ UnitStillMatchesRow = function(self, row, unit)
     end
 
     -- Weak opener fallback:
-    -- hostile nameplates at BG start often have no usable GUID and no display text yet.
-    -- HandlePlateAdded() can legitimately bind these rows by PID, so the resolver must
-    -- also treat the same PID identity as valid or it will immediately throw the bind away.
+    -- The row may have a valid scoreboard GUID, but the enemy nameplate often does NOT expose
+    -- a usable GUID or display name at BG start on 12.x. That means GUID is not a reliable
+    -- row<->nameplate link during opener validation.
+    -- If HandlePlateAdded() bound this plate by seed-compatible PID fallback, the resolver must
+    -- accept the same PID identity here or it will immediately discard a legitimate opener bind.
     if row then
         local pid = UnitPIDSeedCompat and UnitPIDSeedCompat(unit) or 0
         if pid and pid > 0 and row.pid and pid == row.pid then
