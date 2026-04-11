@@ -2459,7 +2459,7 @@ function BGE:SeedRowsFromScoreboard()
     -- BG only (arena uses arena1..arena5)
     if self._mode == "arena" then return end
     if not IsInPVPInstance() then return end
-    if self._scoreLocked or self:IsMatchStarted() then return end
+    if self._scoreLocked then return end
 
     -- Throttle: UPDATE_BATTLEFIELD_SCORE can fire very frequently in busy fights.
     local now = GetTime()
