@@ -4417,6 +4417,7 @@ function BGE:HandlePlateAdded(unit)
     -- If GUID is missing/unusable, fall back to the displayed name text on the nameplate frame.
     local row = nil
     local lookedUpBy = "none"
+    local hadStrongIdentity = false
 
     local guid = SafeUnitGUID(unit)
 
@@ -4430,6 +4431,7 @@ function BGE:HandlePlateAdded(unit)
                 if okRow and hit then
                     row = hit
                     lookedUpBy = "guidScoreName"
+                    hadStrongIdentity = true
                 end
             end
         end
@@ -4443,6 +4445,7 @@ function BGE:HandlePlateAdded(unit)
             row = nil
         elseif row then
             lookedUpBy = "guid"
+            hadStrongIdentity = true
         end
     end
 
