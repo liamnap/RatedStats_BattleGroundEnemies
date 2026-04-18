@@ -3621,15 +3621,14 @@ function BGE:UpdateHealth(row, unit)
 
     local okH, cur = pcall(UnitHealth, readUnit)
     local okM, maxv = pcall(UnitHealthMax, readUnit)
-    if not okH or not okM or type(cur) ~= "number" or type(maxv) ~= "number" or maxv <= 0 then
-        return
+    if okH and okM then
+        -- Midnight hostile values may be secret numbers.
+        -- Do not compare, format, divide, or tostring them here.
+        pcall(row.hp.SetMinMaxValues, row.hp, 0, maxv)
+        pcall(row.hp.SetValue, row.hp, cur)
+        row._lastHpCur = cur
+        row._lastHpMax = maxv
     end
-
-    row._lastHpCur = cur
-    row._lastHpMax = maxv
-
-    pcall(row.hp.SetMinMaxValues, row.hp, 0, maxv)
-    pcall(row.hp.SetValue, row.hp, cur)
 
     local mode = GetSetting("bgeHealthTextMode", 2)
     local txt
@@ -3639,20 +3638,57 @@ function BGE:UpdateHealth(row, unit)
         if UnitHealthPercent then
             local curve = (CurveConstants and CurveConstants.ScaleTo100) or nil
             local okP, v = pcall(UnitHealthPercent, readUnit, true, curve)
-            if okP and type(v) == "number" then
+            if okP then
                 pct = v
             end
         end
-        if pct == nil and maxv > 0 then
-            pct = math.floor((cur / maxv) * 100 + 0.5)
-        end
+
         if pct ~= nil then
-            txt = tostring(math.floor(pct + 0.5)) .. "%"
+            local okTxt, s = pcall(string.format, "%.0f%%", pct)
+            if okTxt then
+                txt = s
+            end
         end
-    elseif mode == 2 then
-        txt = tostring(cur) .. "/" .. tostring(maxv)
+
+        if txt == nil and self._mode ~= "arena" and IsNameplateUnit(readUnit) then
+            local sb = row._hpSB
+            if sb == nil then
+                sb = FindPlateHealthStatusBar(readUnit)
+                row._hpSB = sb or false
+            elseif sb == false then
+                sb = nil
+            end
+            if sb then
+                local pctFill = SafePercentFromStatusBarFill(sb)
+                if pctFill then
+                    txt = pctFill .. "%"
+                end
+            end
+        end
     else
-        txt = tostring(cur)
+        -- Current / CurrentTotal cannot be built safely from secret hostile values.
+        -- Prefer Blizzard numeric plate text if present, otherwise percent from bar fill.
+        if self._mode ~= "arena" and IsNameplateUnit(readUnit) then
+            local sb = row._hpSB
+            if sb == nil then
+                sb = FindPlateHealthStatusBar(readUnit)
+                row._hpSB = sb or false
+            elseif sb == false then
+                sb = nil
+            end
+            if sb then
+                local s = SafePlateHealthNumericText(sb)
+                if s then
+                    txt = s
+                end
+            end
+            if txt == nil and sb then
+                local pctFill = SafePercentFromStatusBarFill(sb)
+                if pctFill then
+                    txt = pctFill .. "%"
+                end
+            end
+        end
     end
 
     if txt then
@@ -3678,7 +3714,7 @@ function BGE:UpdatePower(row, unit)
 
     local okC, cur = pcall(UnitPower, readUnit)
     local okM, maxv = pcall(UnitPowerMax, readUnit)
-    if not okC or not okM or type(cur) ~= "number" or type(maxv) ~= "number" or maxv <= 0 then
+    if not okC or not okM then
         row.power:Hide()
         return
     end
