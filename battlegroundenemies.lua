@@ -481,28 +481,6 @@ local function IsNameplateUnit(unit)
     return type(unit) == "string" and unit:match("^nameplate%d+$") ~= nil
 end
 
--- additional unit tokens that can still provide live HP/PWR.
--- This does NOT give "true global BG HP"; it only works when we can resolve a unit token.
-local function IsGroupTargetUnit(unit)
-    if type(unit) ~= "string" then return false end
-    return unit:match("^raid%d+target$") ~= nil or unit:match("^party%d+target$") ~= nil
-end
-
-local function IsAltEnemyUnit(unit)
-    if type(unit) ~= "string" then return false end
-    if unit == "target" or unit == "focus" or unit == "mouseover" or unit == "softenemy" then
-        return true
-    end
-    if unit:match("^nameplate%d+target$") ~= nil then
-        return true
-    end
-    return IsGroupTargetUnit(unit)
-end
-
-local function IsTrackedBGUnit(unit)
-    return IsNameplateUnit(unit) or IsAltEnemyUnit(unit)
-end
-
 -- Arena uses arena unit tokens (arena1..arena5). Do NOT rely on nameplates in arena.
 local function IsArenaUnit(unit)
     return type(unit) == "string" and unit:match("^arena%d+$") ~= nil
@@ -4394,120 +4372,16 @@ function BGE:HandleUnitUpdate(unit, what, force)
     if self._mode == "arena" then
         if not IsArenaUnit(unit) then return end
     else
-        if not IsTrackedBGUnit(unit) then return end
+        if not IsNameplateUnit(unit) then return end
     end
     local row
     if self._mode == "arena" then
         row = self:GetRowForUnit(unit)
     else
         row = mappedRow
-        if not row then
-            -- Late map: try GUID match (covers rare event ordering).
-            local guid = SafeUnitGUID(unit)
-            if guid and self.rowByGuid then
-                local okHas, hit = pcall(function() return self.rowByGuid[guid] end)
-                if not okHas then
-                    -- Same secret-index crash site; debug and bail.
-                    BGE:DebugScoreVsNameplate("UNIT_UPDATE_SECRET_INDEX", unit, guid)
-                    return
-                end
-                DPrint("UNIT_LOOKUP_" .. unit,
-                    "LOOKUP_UNIT unit=" .. unit ..
-                    " what=" .. tostring(what) ..
-                    " guidKey=" .. (SafeToString(guid) or "<secret>") ..
-                    " hit=" .. Bool01(hit ~= nil)
-                )
-                if hit then
-                    row = hit
-                end
-            end
-
-            -- Fallback: fullName match when GUID is blocked/secret (useful for target/focus/ally-target tokens)
-            if not row and not IsNameplateUnit(unit) then
-                local full = SafeUnitFullName(unit)
-                if full and self.rowByName then
-                    local okHas2, hit2 = pcall(function() return self.rowByName[full] end)
-                    if okHas2 and hit2 then
-                        row = hit2
-                    end
-                end
-            end
-
-            -- Fallback: match by displayed name text on the nameplate frame.
-            -- This is critical on 12.0 where enemy UnitGUID/UnitName can be restricted.
-            if not row then
-                local disp, dispBase = GetNameplateDisplayNames(unit)
-                if disp and self.rowByFullName then
-                    row = self.rowByFullName[disp]
-                    if row then
-                        DPrint("UNIT_LOOKUPD_" .. unit, "LOOKUP_UNIT_D unit=" .. unit .. " what=" .. tostring(what) .. " by=dispFull hit=1")
-                    end
-                end
-                if (not row) and dispBase and self.rowByBaseName and self.baseNameCounts and self.baseNameCounts[dispBase] == 1 then
-                    row = self.rowByBaseName[dispBase]
-                    if row then
-                        DPrint("UNIT_LOOKUPD_" .. unit, "LOOKUP_UNIT_D unit=" .. unit .. " what=" .. tostring(what) .. " by=dispBase hit=1")
-                    end
-                end
-            end
-
-            if row then
-                if IsNameplateUnit(unit) then
-                    -- Nameplate units recycle. Make sure only one row owns this unit token.
-                    ClearUnitCollision(self, unit, row)
-
-                    -- If the row had an old unit mapping, clear it
-                    if row.unit and self.rowByUnit[row.unit] == row then
-                        self.rowByUnit[row.unit] = nil
-                    end
-
-                    -- Force bar rescan on new unit token
-                    if row._barsUnit ~= unit then
-                        row._barsUnit = nil
-                        row._hpSB = nil
-                        row._pwrSB = nil
-                        row._hpSBAt = nil
-                        row._pwrSBAt = nil
-                    end
-                    row.unit = unit
-                    row.UnitIDs = row.UnitIDs or {}
-                    row.UnitIDs.Nameplate = unit
-                    row.unitID = unit
-                    row._unitIDKind = "Nameplate"
-                    self.rowByUnit[unit] = row
-                    -- Make click-to-target correct only for real nameplate units.
-                    if not InLockdown() then
-                        row:SetAttribute("unit", unit)
-                    else
-                        self.pendingUnitByRow[row] = unit
-                    end
-                else
-                    -- Don't bind secure click-to-target to unstable tokens like raid1target/party1target.
-                    local sourceKey = "GroupTarget"
-                    if unit == "target" then
-                        sourceKey = "Target"
-                    elseif unit == "focus" then
-                        sourceKey = "Focus"
-                    elseif unit == "mouseover" then
-                        sourceKey = "Mouseover"
-                    elseif unit == "softenemy" then
-                        sourceKey = "SoftEnemy"
-                    elseif type(unit) == "string" and unit:match("^nameplate%d+target$") then
-                        sourceKey = "NameplateTarget"
-                    end
-                    self:UpdateEnemyUnitID(row, sourceKey, unit)
-                end
-            end
-        end
+        if not row then return end
     end
     if not row then return end
-    if not row.unit and IsNameplateUnit(unit) then
-        row.unit = unit
-        row.UnitIDs = row.UnitIDs or {}
-        row.UnitIDs.Nameplate = unit
-        row.unitID = unit
-        row._unitIDKind = "Nameplate"
-    end
 
     if what == "NAME" then
         DebugUnitSnapshot("UNIT_NAME_UPDATE", unit)
