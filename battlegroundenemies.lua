@@ -2350,6 +2350,17 @@ function BGE:SeedRowsFromScoreboard()
     -- Build roster from the scoreboard.
     self:BuildRosterFromScoreboard()
 
+    local rosterN = (self.roster and #self.roster) or 0
+    local expected = self._expectedBGTeamSize or self._expectedBGTeamSizeGuess
+
+    -- Prep phase: once we have a full enemy roster, stop full reseed churn.
+    -- Keep the existing rows/binds and just do a bind scan.
+    if (not self._matchStarted) and expected and rosterN >= expected and self._seededThisBG and self._seedCount == rosterN then
+        self:ScanNameplatesForGuidBindings()
+        self:UpdateRowVisibilities()
+        return
+    end
+
     -- Mid-match join: don't stop reseeding just because the currently seeded rows look "resolved".
     -- Only stop once the roster has reached the expected team size for this map.
     if self._matchStarted and self._seededThisBG and (not self:HasUnresolvedSeededRows()) then
