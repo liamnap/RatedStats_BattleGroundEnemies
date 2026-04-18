@@ -3620,9 +3620,7 @@ function BGE:PollLiveBars()
         local row = self.rows[i]
         if row then
             local unit = row.unit
-            if (not unit) and self.ResolveEnemyPrimaryUnitID then
-                unit = self:ResolveEnemyPrimaryUnitID(row)
-            end
+
             if unit and UnitExists(unit) and not UnitIsFriend("player", unit) then
                 -- These will fall back to reading the nameplate StatusBars when Unit* APIs are blocked.
                 self:UpdateHealth(row, unit)
@@ -3669,11 +3667,8 @@ function BGE:UpdateHealth(row, unit)
     -- Prefer reading the nameplate StatusBar when we can (this is the "works in BGs" path).
     -- If the update came from raidXtarget/etc but we also have a bound nameplate unit, use that for health read.
     local readUnit = unit
-    if self._mode ~= "arena" and row then
-        local resolved = self:ResolveEnemyPrimaryUnitID(row)
-        if resolved and UnitExists(resolved) then
-            readUnit = resolved
-        end
+    if self._mode ~= "arena" and row and row.unit and UnitExists(row.unit) then
+        readUnit = row.unit
     end
 
     -- Cache invalidation: nameplate frames get recycled.
@@ -3893,11 +3888,8 @@ function BGE:UpdateHealth(row, unit)
 end
 
 function BGE:UpdatePower(row, unit)
-    if self._mode ~= "arena" and row then
-        local resolved = self:ResolveEnemyPrimaryUnitID(row)
-        if resolved and UnitExists(resolved) then
-            unit = resolved
-        end
+    if self._mode ~= "arena" and row and row.unit and UnitExists(row.unit) then
+        unit = row.unit
     end
     if not GetSetting("bgeShowPower", true) then
         row.power:Hide()
@@ -4113,8 +4105,6 @@ function BGE:ScanNameplateTargets()
             local row = self:GetRowForExternalUnit(targetUnit)
             if row then
                 self:UpdateEnemyUnitID(row, "NameplateTarget", targetUnit)
-                self:UpdateHealth(row, targetUnit)
-                self:UpdatePower(row, targetUnit)
             end
         end
     end
@@ -4218,8 +4208,6 @@ function BGE:ScanTargets()
                 end
 
                 self:UpdateEnemyUnitID(row, sourceKey, u)
-                self:UpdateHealth(row, u)
-                self:UpdatePower(row, u)
                 anyHit = true
             end
         end
@@ -4253,8 +4241,6 @@ function BGE:HandleUnitTargetChanged(srcUnit)
     if not row then return end
 
     self:UpdateEnemyUnitID(row, "GroupTarget", targetUnit)
-    self:UpdateHealth(row, targetUnit)
-    self:UpdatePower(row, targetUnit)
 end
 
 function BGE:HandlePlateAdded(unit)
