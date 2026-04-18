@@ -4694,10 +4694,6 @@ function BGE:HandleUnitUpdate(unit, what, force)
         self:UpdateIdentity(row, unit)
         self:UpdateRowVisibilities()
     elseif what == "HP" then
-        local now = GetTime()
-        local last = row._lastHPAt or 0
-        if (not force) and (now - last) < 0.5 then return end
-        row._lastHPAt = now
         self:UpdateHealth(row, unit)
     elseif what == "PWR" then
         local now = GetTime()
@@ -5435,7 +5431,7 @@ evt:SetScript("OnEvent", function(_, event, arg1)
         return
     end
 
-    if event == "UNIT_HEALTH" or event == "UNIT_MAXHEALTH" then
+    if event == "UNIT_HEALTH" or event == "UNIT_HEALTH_FREQUENT" or event == "UNIT_MAXHEALTH" then
         BGE:HandleUnitUpdate(arg1, "HP")
         return
     end
