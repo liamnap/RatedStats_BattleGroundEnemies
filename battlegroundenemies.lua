@@ -55,7 +55,6 @@ BGE.pidCounts = {}
 BGE.ClassTokenToID = nil
 BGE.RaceNameToID = nil
 BGE.pendingUnitByGuid = {}
-BGE.pendingUnitByRow = {}
 -- Last seeded roster size.
 BGE._seedCount = 0
 BGE._guidRetryAt = {}
@@ -422,14 +421,6 @@ function BGE:ScanNameplatesForGuidBindings()
                 row._pwrSB = nil
                 row._hpSBAt = nil
                 row._pwrSBAt = nil
-
-                -- Bind secure click-to-target to this live unit token.
-                if not InLockdown() then
-                    row:SetAttribute("unit", unit)
-                else
-                    self.pendingUnitByRow = self.pendingUnitByRow or {}
-                    self.pendingUnitByRow[row] = unit
-                end
 
                 -- Snap bars immediately now that we have a live unit.
                 self:UpdateIdentity(row, unit)
@@ -802,11 +793,6 @@ ClearUnitCollision = function(self, unit, keepRow)
     -- Remove reverse mapping
     if self.rowByUnit[unit] == other then
         self.rowByUnit[unit] = nil
-    end
-
-    -- Clear any deferred secure unit binding for this row
-    if self.pendingUnitByRow then
-        self.pendingUnitByRow[other] = nil
     end
 
     if not InLockdown() then
@@ -1805,9 +1791,6 @@ local function MakeRow(parent, plateIndex)
     row:RegisterForClicks(GetCVarBool("ActionButtonUseKeyDown") and "AnyDown" or "AnyUp")
     row:SetAttribute("type1", "macro")
     row:SetAttribute("macrotext", nil)
-    -- IMPORTANT: roster rows are not "nameplate index" rows.
-    -- We only set the unit attribute once we have a GUID->nameplate match.
-    row:SetAttribute("unit", nil)
     row.plateIndex = nil
 
     -- PostClick: keep secure macro targeting intact, then apply selection highlight.
@@ -1820,18 +1803,10 @@ local function MakeRow(parent, plateIndex)
 
     -- IMPORTANT: do NOT SetScript("OnClick") on a secure action button; it breaks secure targeting.
     -- Use PostClick so the secure target action runs, then we do selection/highlight.
-    row:HookScript("PostClick", function(self, button)
+    row:HookScript("PostClick", function(self)
         local bge = _G.RSTATS_BGE
-        if not bge then return end
-
-        bge:SetSelectedRow(self)
-
-        -- Keep the secure unit attribute in sync out of combat (combat lockdown blocks SetAttribute).
-        if button == "LeftButton" and not self._preview and self.unit and not InLockdown() then
-            local cur = self:GetAttribute("unit")
-            if cur ~= self.unit then
-                self:SetAttribute("unit", self.unit)
-            end
+        if bge then
+            bge:SetSelectedRow(self)
         end
     end)
 
@@ -2533,7 +2508,6 @@ function BGE:SeedRowsFromScoreboard()
     -- Rebuild unit bindings from preserved GUID matches where possible.
     wipe(self.rowByUnit)
     wipe(self.pendingUnitByGuid)
-    wipe(self.pendingUnitByRow)
 
     local rosterN = (self.roster and #self.roster) or 0
     local max = math.min(self.maxPlates, rosterN)
@@ -2663,7 +2637,7 @@ function BGE:SeedRowsFromScoreboard()
                 if not InLockdown() then
                     row:SetAttribute("unit", u)
                 else
-                    self.pendingUnitByRow[row] = u
+
                 end
                 -- Force a snap update now that the binding is restored.
                 self:UpdateHealth(row, u)
@@ -4320,7 +4294,6 @@ function BGE:HandlePlateAdded(unit)
     if not InLockdown() then
         row:SetAttribute("unit", unit)
     else
-        self.pendingUnitByRow[row] = unit
     end
 
     self:UpdateIdentity(row, unit)
@@ -4712,7 +4685,6 @@ function BGE:RefreshVisibility()
         wipe(self.rowByName)
         wipe(self.nameCounts)
         wipe(self.pendingUnitByGuid)
-        wipe(self.pendingUnitByRow)
         self._expectedBGTeamSize = nil
         self._expectedBGTeamSizeGuess = nil
         self._latchedBGWant = nil
@@ -5077,14 +5049,7 @@ evt:SetScript("OnEvent", function(_, event, arg1)
                 _G.RSTATS_BGE.pendingUnitByGuid[guid] = nil
             end
         end
-		if _G.RSTATS_BGE and _G.RSTATS_BGE.pendingUnitByRow then
-			for row, unit in pairs(_G.RSTATS_BGE.pendingUnitByRow) do
-				if row and unit and UnitExists(unit) then
-					row:SetAttribute("unit", unit)
-				end
-				_G.RSTATS_BGE.pendingUnitByRow[row] = nil
-			end
-		end
+
         -- Apply deferred macrotext updates after combat (secure attribute).
         if _G.RSTATS_BGE and _G.RSTATS_BGE.pendingMacroByRow then
             for row, macro in pairs(_G.RSTATS_BGE.pendingMacroByRow) do
