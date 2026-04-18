@@ -4325,117 +4325,9 @@ function BGE:HandlePlateAdded(unit)
         end
     end
 
-    -- 3) Fallback: PID match when GUID and display name are unavailable.
-    if (not row) and self.rowByPID then
-        local okH, honor = pcall(UnitHonorLevel, unit)
-        honor = (okH and type(honor) == "number") and honor or 0
-
-        -- Keep delayed retry for weak early hostile nameplate data,
-        -- but DO NOT block immediate PID fallback on this same pass.
-        if honor == 0 and C_Timer and C_Timer.After then
-            self._honorZeroRetry = self._honorZeroRetry or {}
-            self._honorZeroPending = self._honorZeroPending or {}
-
-            local c = self._honorZeroRetry[unit] or 0
-            if c >= 2 then
-                self._honorZeroRetry[unit] = nil
-                self._honorZeroPending[unit] = nil
-            elseif not self._honorZeroPending[unit] then
-                self._honorZeroRetry[unit] = c + 1
-                self._honorZeroPending[unit] = true
-                local u = unit
-                C_Timer.After(5, function()
-                    local b = _G.RSTATS_BGE
-                    if not b then return end
-                    b._honorZeroPending[u] = nil
-                    if UnitExists(u) then
-                        b:HandlePlateAdded(u)
-                    end
-                end)
-            end
-        end
-
-        -- Seeded rows are built from scoreboard data which has no level/sex in 12.x,
-        -- so PID matching against seeded rows MUST be seed-compatible (level=0, sex=0).
-        local pid = UnitPIDSeedCompat(unit)
-        if (not row) and pid and pid > 0 then
-            local okRow, hit = pcall(function() return self.rowByPID[pid] end)
-            if okRow and hit then
-                row = hit
-                lookedUpBy = "pid"
-            end
-        end
-    end
-
     if not row then
-        if GetSetting("bgeDebug", false) then
-            local dispFull, dispBase = GetNameplateDisplayNames(unit)
-            DPrintMissing("MISSBIND_" .. unit,
-                "MISSBIND unit=" .. tostring(unit) ..
-                " dispFull=" .. tostring(dispFull or "nil") ..
-                " dispBase=" .. tostring(dispBase or "nil") ..
-                " guid=" .. tostring(SafeUnitGUID(unit) or "nil") ..
-                " pid=" .. tostring(UnitPIDSeedCompat(unit) or 0)
-            )
-        end
-
-        -- Nameplate units recycle; don't poison retries for a new occupant.
-        do
-            local key = 0
-            if UnitPIDSeedCompat then
-                local p = UnitPIDSeedCompat(unit) or 0
-                if p and p > 0 then key = p end
-            end
-            if key == 0 and UnitPID then
-                local p2 = UnitPID(unit) or 0
-                if p2 and p2 > 0 then key = p2 end
-            end
-
-            local prev = self._plateAddRetryKey and self._plateAddRetryKey[unit] or nil
-            if prev ~= key then
-                self._plateAddRetryKey[unit] = key
-                if self._plateAddRetry then
-                    self._plateAddRetry[unit] = 0
-                end
-                if self._plateAddRetryPending then
-                    self._plateAddRetryPending[unit] = nil
-                end
-            end
-        end
-
-        if C_Timer and C_Timer.After then
-            self._plateAddRetry = self._plateAddRetry or {}
-            self._plateAddRetryPending = self._plateAddRetryPending or {}
-
-            local c = self._plateAddRetry[unit] or 0
-            if c >= 60 then
-                self._plateAddRetry[unit] = nil
-                self._plateAddRetryPending[unit] = nil
-            elseif not self._plateAddRetryPending[unit] then
-                self._plateAddRetry[unit] = c + 1
-                self._plateAddRetryPending[unit] = true
-
-                local u = unit
-                local expectedKey = self._plateAddRetryKey and self._plateAddRetryKey[unit] or nil
-                C_Timer.After(2, function()
-                    local b = _G.RSTATS_BGE
-                    if not b then return end
-                    b._plateAddRetryPending[u] = nil
-                    if not UnitExists(u) then return end
-
-                    local curKey = b._plateAddRetryKey and b._plateAddRetryKey[u] or nil
-                    if expectedKey ~= nil and curKey ~= expectedKey then
-                        return
-                    end
-
-                    b:HandlePlateAdded(u)
-                end)
-            end
-        end
         return
     end
-
-    self._plateAddRetry[unit] = nil
 
     ClearUnitCollision(self, unit, row)
 
@@ -4472,36 +4364,6 @@ function BGE:HandlePlateAdded(unit)
     self:UpdatePower(row, unit)
     ApplyClassAlpha(row, CLASS_ALPHA_ACTIVE)
 
-    local needRetry = (not row.name) or (not row.classFile) or (not FontStringHasText(row.hpText))
-    if GetSetting("bgeDebug", false) and not FontStringHasText(row.hpText) then
-        DPrintMissing("BINDNOHP_" .. tostring(row.fullName or row.name or unit),
-            "BINDNOHP unit=" .. tostring(unit) ..
-            " row=" .. tostring(row.fullName or row.name or "nil") ..
-            " by=" .. tostring(lookedUpBy or "nil") ..
-            " resolved=" .. tostring((self.ResolveEnemyPrimaryUnitID and self:ResolveEnemyPrimaryUnitID(row)) or "nil")
-        )
-    end
-    if needRetry and C_Timer and C_Timer.After then
-        local u = unit
-        local r = row
-        C_Timer.After(0.5, function()
-            if r and r.unit == u and UnitExists(u) then
-                if not r.name or not r.classFile or not FontStringHasText(r.hpText) then
-                    self:UpdateIdentity(r, u)
-                    self:UpdateHealth(r, u)
-                    self:UpdatePower(r, u)
-                end
-            end
-        end)
-        C_Timer.After(1, function()
-            if r and r.unit == u and UnitExists(u) then
-                if not r.name then
-                    self:UpdateIdentity(r, u)
-                end
-            end
-        end)
-    end
-
     self:UpdateRowVisibilities()
     self:SyncSelectedRowToTarget()
 end
@@ -4511,20 +4373,6 @@ function BGE:HandlePlateRemoved(unit)
     if not IsNameplateUnit(unit) then return end
     local row = self.rowByUnit and self.rowByUnit[unit] or nil
     if not row then return end
-
-    if self._plateAddRetry then self._plateAddRetry[unit] = nil end
-    if self._plateAddRetryPending then self._plateAddRetryPending[unit] = nil end
-
-    if self._plateAddRetryKey then
-        self._plateAddRetryKey[unit] = nil
-    end
-
-    if self._honorZeroRetry then
-        self._honorZeroRetry[unit] = nil
-    end
-    if self._honorZeroPending then
-        self._honorZeroPending[unit] = nil
-    end
 
     -- Do NOT wipe. Keep last known identity/bars and just fade until it returns.
     row.unit = nil
