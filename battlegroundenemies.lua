@@ -54,7 +54,6 @@ BGE.rowByPID = {}
 BGE.pidCounts = {}
 BGE.ClassTokenToID = nil
 BGE.RaceNameToID = nil
-BGE.pendingUnitByGuid = {}
 -- Last seeded roster size.
 BGE._seedCount = 0
 BGE._guidRetryAt = {}
@@ -2375,7 +2374,6 @@ function BGE:SeedRowsFromScoreboard()
 
     -- Rebuild unit bindings from preserved GUID matches where possible.
     wipe(self.rowByUnit)
-    wipe(self.pendingUnitByGuid)
 
     local rosterN = (self.roster and #self.roster) or 0
     local max = math.min(self.maxPlates, rosterN)
@@ -4404,7 +4402,6 @@ function BGE:RefreshVisibility()
         wipe(self.rowByUnit)
         wipe(self.rowByName)
         wipe(self.nameCounts)
-        wipe(self.pendingUnitByGuid)
         self._expectedBGTeamSize = nil
         self._expectedBGTeamSizeGuess = nil
         self._latchedBGWant = nil
