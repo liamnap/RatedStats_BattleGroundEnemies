@@ -320,154 +320,6 @@ function BGE:DebugScoreVsNameplate(tag, unit, guidKey)
     )
 end
 
--- After we seed new scoreboard rows, some of those players may already have
--- visible nameplates (because nameplates can appear before the scoreboard fills).
--- Scan current nameplates and bind GUID matches to seeded rows.
-function BGE:ScanNameplatesForGuidBindings()
-    if self._mode == "arena" then return end
-    if not self.rowByUnit then return end
-    -- Allow scanning even when GUID map is unavailable (scoreboard locked / secret),
-    -- as long as we have *some* seeded map to bind against.
-    if not (self.rowByGuid or self.rowByFullName or self.rowByBaseName or self.rowByPID) then
-        return
-    end
-
-    for i = 1, (self.maxPlates or 40) do
-        local unit = "nameplate" .. tostring(i)
-        -- UnitIsPlayer() can be unreliable on enemy nameplates (especially after /reload mid-match).
-        -- Only hard-skip confirmed friendlies.
-        if unit and UnitExists(unit) and not UnitIsFriend("player", unit) then
-            local row = nil
-            local bindBy = nil
-
-            -- 1) Prefer GUID match if the nameplate GUID is usable.
-            local guid = SafeUnitGUID(unit)
-            if guid and self.rowByGuid then
-                row = self.rowByGuid[guid]
-                if row then bindBy = "guid" end
-            end
-
-            -- 2) Fallback: match by displayed name text on the nameplate frame.
-            local disp, dispBase
-            if not row then
-                disp, dispBase = GetNameplateDisplayNames(unit)
-                if disp and self.rowByFullName then
-                    row = self.rowByFullName[disp]
-                    if row then bindBy = "disp" end
-                end
-                if (not row) and dispBase and self.rowByBaseName and self.baseNameCounts and self.baseNameCounts[dispBase] == 1 then
-                    row = self.rowByBaseName[dispBase]
-                    if row then bindBy = "dispBase" end
-                end
-            end
-
-            -- 3) Fallback: PID match (when GUID + disp are unavailable).
-            if not row then
-                local pid = UnitPIDSeedCompat(unit)
-                if pid and pid > 0 and self.rowByPID then
-                    row = self.rowByPID[pid]
-                    if row then bindBy = "pid" end
-                end
-            end
-
-            if not row then
-                DPrintMissing("SCANMISS_" .. unit,
-                    "SCANMISS unit=" .. tostring(unit) ..
-                    " guid=" .. tostring(SafeUnitGUID(unit) or "nil") ..
-                    " dispFull=" .. tostring(disp or "nil") ..
-                    " dispBase=" .. tostring(dispBase or "nil") ..
-                    " pid=" .. tostring(UnitPIDSeedCompat(unit) or 0)
-                )
-            end
-
-            -- Rebind if missing OR stale (nameplates recycle)
-            local stale = false
-            if row and row.unit and UnitExists(row.unit) then
-                stale = not UnitStillMatchesRow(self, row, row.unit)
-            end
-            if row and ((row.unit == nil) or (not UnitExists(row.unit)) or stale) then
-                local pidNow = UnitPID(unit)
-                DPrint("BIND_" .. unit,
-                    "BIND unit=" .. unit ..
-                    " by=" .. tostring(bindBy or "pid") ..
-                    " pid=" .. tostring(pidNow or 0) ..
-                    " rowName=" .. tostring(row.name or "nil")
-                )
-
-                -- If another row already owns this unit token, clear it (nameplate recycle)
-                ClearUnitCollision(self, unit, row)
-
-                -- If the row had an old unit mapping, clear it
-                if row.unit and self.rowByUnit[row.unit] == row then
-                    self.rowByUnit[row.unit] = nil
-                end
-
-                row.unit = unit
-                row.UnitIDs = row.UnitIDs or {}
-                row.UnitIDs.Nameplate = unit
-                row.unitID = unit
-                row._unitIDKind = "Nameplate"
-                DPrint("SCANBIND_" .. tostring(unit),
-                    "SCANBIND unit=" .. tostring(unit) ..
-                    " rowName=" .. tostring(row.name or "nil") ..
-                    " by=" .. tostring(bindBy or "nil"))
-                row._preview = false
-                row._outOfRange = false
-                self.rowByUnit[unit] = row
-
-                -- Force bar rescan on new unit token
-                row._barsUnit = nil
-                row._hpSB = nil
-                row._pwrSB = nil
-                row._hpSBAt = nil
-                row._pwrSBAt = nil
-
-                -- Snap bars immediately now that we have a live unit.
-                self:UpdateIdentity(row, unit)
-                self:UpdateHealth(row, unit)
-                self:UpdatePower(row, unit)
-
-                if not FontStringHasText(row.hpText) then
-                    DPrintMissing("SCANNOHP_" .. tostring(row.fullName or row.name or unit),
-                        "SCANNOHP unit=" .. tostring(unit) ..
-                        " row=" .. tostring(row.fullName or row.name or "nil") ..
-                        " by=" .. tostring(bindBy or "nil") ..
-                        " resolved=" .. tostring((self.ResolveEnemyPrimaryUnitID and self:ResolveEnemyPrimaryUnitID(row)) or "nil")
-                    )
-                end
-            end
-        end
-    end
-end
-
--- On Engaged, do a fast pass to bind as many visible nameplates as possible to seeded rows.
--- IMPORTANT: This does NOT touch the scoreboard (score APIs can be secret/blocked mid-match).
-function BGE:EngagedNameplateSweep()
-    if self._mode == "arena" then return end
-    if not IsInPVPInstance() then return end
-    if not self.rows or not self.rowByUnit then return end
-
-    -- 1) Bind immediately
-    self:ScanNameplatesForGuidBindings()
-
-    -- 2) One short follow-up to catch plates created a few frames after gates open
-    if C_Timer and C_Timer.After then
-        C_Timer.After(0.10, function()
-            local b = _G.RSTATS_BGE
-            if not b or not IsInPVPInstance() then return end
-            b:ScanNameplatesForGuidBindings()
-        end)
-    end
-end
-
-Scrub2 = function(...)
-    -- IMPORTANT:
-    -- scrubsecretvalues() replaces secret values with nil. That prevents errors,
-    -- but it also destroys the data (names/guids/classes become nil).
-    -- We do NOT want that in operational code.
-    return ...
-end
-
 local function IsNameplateUnit(unit)
     return type(unit) == "string" and unit:match("^nameplate%d+$") ~= nil
 end
@@ -2356,7 +2208,12 @@ function BGE:SeedRowsFromScoreboard()
     -- Prep phase: once we have a full enemy roster, stop full reseed churn.
     -- Keep the existing rows/binds and just do a bind scan.
     if (not self._matchStarted) and expected and rosterN >= expected and self._seededThisBG and self._seedCount == rosterN then
-        self:ScanNameplatesForGuidBindings()
+        for i = 1, (self.maxPlates or 40) do
+            local unit = "nameplate" .. tostring(i)
+            if UnitExists(unit) and not UnitIsFriend("player", unit) then
+            self:HandlePlateAdded(unit)
+        end
+    end
         self:UpdateRowVisibilities()
         return
     end
@@ -2527,9 +2384,6 @@ function BGE:SeedRowsFromScoreboard()
     for i = max + 1, self.maxPlates do
         local row = self.rows[i]
         if row and not row._preview then
-            if not InLockdown() then
-                row:SetAttribute("unit", nil)
-            end
             self:ReleaseRow(row)
             row._seenIdentity = nil
             row:SetAlpha(0)
@@ -2582,9 +2436,6 @@ function BGE:SeedRowsFromScoreboard()
 					row.UnitIDs.GroupTarget = nil
 					row.UnitIDs.NameplateTarget = nil
 				end
-                if not InLockdown() then
-                    row:SetAttribute("unit", nil)
-                end
             end
 
             -- Only clear text if this row now represents a different player.
@@ -2645,11 +2496,6 @@ function BGE:SeedRowsFromScoreboard()
                 row.unitID = u
                 row._unitIDKind = "Nameplate"
                 self.rowByUnit[u] = row
-                if not InLockdown() then
-                    row:SetAttribute("unit", u)
-                else
-
-                end
                 -- Force a snap update now that the binding is restored.
                 self:UpdateHealth(row, u)
                 self:UpdatePower(row, u)
@@ -2714,7 +2560,12 @@ function BGE:SeedRowsFromScoreboard()
     self._seedCount = max
 
     -- After reseed, immediately bind any visible nameplates to rows.
-    self:ScanNameplatesForGuidBindings()
+    for i = 1, (self.maxPlates or 40) do
+        local unit = "nameplate" .. tostring(i)
+        if UnitExists(unit) and not UnitIsFriend("player", unit) then
+            self:HandlePlateAdded(unit)
+        end
+    end
     self:UpdateRowVisibilities()
 end
 
@@ -4057,12 +3908,12 @@ function BGE:HandlePlateAdded(unit)
     -- If GUID is missing/unusable, fall back to the displayed name text on the nameplate frame.
     local row = nil
     local lookedUpBy = "none"
-    local hadStrongIdentity = false
 
     local guid = SafeUnitGUID(unit)
 
     -- If GUID is restricted/secret and SafeUnitGUID() returns nil, try scoreboard lookup by raw GUID.
-    if not guid and (not row) and self.rowByFullName then
+    -- 1) GUID -> scoreboard fullName fallback
+    if not guid and self.rowByFullName then
         local okG, guidRaw = pcall(UnitGUID, unit)
         if okG and guidRaw then
             local full = ScoreFullNameFromGuid(guidRaw)
@@ -4071,24 +3922,23 @@ function BGE:HandlePlateAdded(unit)
                 if okRow and hit then
                     row = hit
                     lookedUpBy = "guidScoreName"
-                    hadStrongIdentity = true
                 end
             end
         end
     end
 
+    -- 2) Direct GUID match
     if guid and self.rowByGuid then
-        local okIdx = true
-        okIdx, row = pcall(function() return self.rowByGuid[guid] end)
+        local okIdx, hit = pcall(function() return self.rowByGuid[guid] end)
         if not okIdx then
             BGE:DebugScoreVsNameplate("PLATE_ADDED_SECRET_INDEX", unit, guid)
-            row = nil
-        elseif row then
+        elseif hit then
+            row = hit
             lookedUpBy = "guid"
-            hadStrongIdentity = true
         end
     end
 
+    -- 3) Displayed plate text fallback
     if not row then
         local disp, dispBase = GetNameplateDisplayNames(unit)
 
@@ -4098,7 +3948,6 @@ function BGE:HandlePlateAdded(unit)
             if okRow and hit then
                 row = hit
                 lookedUpBy = "dispFull"
-                hadStrongIdentity = true
             end
         end
 
@@ -4108,8 +3957,19 @@ function BGE:HandlePlateAdded(unit)
             if okRow and hit then
                 row = hit
                 lookedUpBy = "dispBase"
-                hadStrongIdentity = true
             end
+        end
+
+        -- 4) PID fallback
+        if (not row) and self.rowByPID then
+            local pid = UnitPIDSeedCompat(unit)
+            if pid and pid > 0 then
+                local okRow, hit = pcall(function() return self.rowByPID[pid] end)
+                if okRow and hit then
+                    row = hit
+                    lookedUpBy = "pid"
+                end
+             end
         end
     end
 
@@ -4140,9 +4000,9 @@ function BGE:HandlePlateAdded(unit)
 
     row.unit = unit
 	row.UnitIDs = row.UnitIDs or {}
-	row.UnitIDs.Nameplate = unit
-	row.unitID = unit
-	row._unitIDKind = "Nameplate"
+    row.UnitIDs.Nameplate = unit
+    row.unitID = unit
+    row._unitIDKind = "Nameplate"
     row._preview = false
     row._outOfRange = false
     row._seeded = nil
@@ -4898,16 +4758,6 @@ evt:SetScript("OnEvent", function(_, event, arg1)
             _G.RSTATS_BGE:ApplyMode()
             _G.RSTATS_BGE:ApplyAnchors()
             _G.RSTATS_BGE:UpdateRowVisibilities()
-        end
-        -- Apply deferred GUID->unit bindings after combat (secure attribute).
-        if _G.RSTATS_BGE and _G.RSTATS_BGE.pendingUnitByGuid then
-            for guid, unit in pairs(_G.RSTATS_BGE.pendingUnitByGuid) do
-                local row = _G.RSTATS_BGE.rowByGuid and _G.RSTATS_BGE.rowByGuid[guid] or nil
-                if row and unit and UnitExists(unit) then
-                    row:SetAttribute("unit", unit)
-                end
-                _G.RSTATS_BGE.pendingUnitByGuid[guid] = nil
-            end
         end
 
         -- Apply deferred macrotext updates after combat (secure attribute).
