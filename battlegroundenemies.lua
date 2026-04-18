@@ -3606,287 +3606,90 @@ function BGE:PollLiveBars()
 end
 
 function BGE:UpdateHealth(row, unit)
-    local cur, maxv
-
-    -- If the unit is dead, show 0 instantly (prevents "full HP dead player" visuals).
-    if UnitIsDeadOrGhost and UnitIsDeadOrGhost(unit) then
-        pcall(row.hp.SetMinMaxValues, row.hp, 0, 1)
-        pcall(row.hp.SetValue, row.hp, 0)
-        row.hpText:SetText("DEAD")
-        return
-    end
-
-    -- Prefer reading the nameplate StatusBar when we can (this is the "works in BGs" path).
-    -- If the update came from raidXtarget/etc but we also have a bound nameplate unit, use that for health read.
     local readUnit = unit
     if self._mode ~= "arena" and row and row.unit and UnitExists(row.unit) then
         readUnit = row.unit
     end
+    if not readUnit or not UnitExists(readUnit) then return end
 
-    -- Cache invalidation: nameplate frames get recycled.
-    -- IMPORTANT: invalidate based on the unit we actually read bars from (readUnit), not the event token (unit).
-    if row._barsUnit ~= readUnit then
-        row._barsUnit = readUnit
-        row._lastHpTextAt = nil
-        row._lastClipAt = nil
-        row._hpSB = nil
-        -- Important: don't carry old text across recycled frames/units.
+    if UnitIsDeadOrGhost and UnitIsDeadOrGhost(readUnit) then
+        pcall(row.hp.SetMinMaxValues, row.hp, 0, 1)
+        pcall(row.hp.SetValue, row.hp, 0)
+        pcall(row.hpText.SetText, row.hpText, "DEAD")
+        return
     end
 
-    local secretNums = false
-    if self._mode ~= "arena" and IsNameplateUnit(readUnit) then
-        cur, maxv, secretNums = SafePlateHealth(readUnit)
-    end
-
-    -- Fallback for target/focus/mouseover/raidtarget style units.
-    -- Clicking a row can give us one of these even if the row has no stable nameplate bar yet.
-    if (not cur or not maxv) and UnitExists(readUnit) then
-        cur, maxv = SafeUnitHealth(readUnit)
-        secretNums = false
-    end
-
-    if (not cur or not maxv) and GetSetting("bgeDebug", false) and self._mode ~= "arena" then
-        local dbgUnit = readUnit or unit
-        if dbgUnit and IsNameplateUnit(dbgUnit) then
-            DPrintMissing("HPMISS_" .. tostring(row and (row.fullName or row.name or dbgUnit) or dbgUnit),
-                "HPMISS row=" .. tostring(row and (row.fullName or row.name or "nil") or "nil") ..
-                " unit=" .. tostring(unit or "nil") ..
-                " readUnit=" .. tostring(dbgUnit or "nil") ..
-                " row.unit=" .. tostring(row and row.unit or "nil") ..
-                " resolved=" .. tostring((row and self.ResolveEnemyPrimaryUnitID and self:ResolveEnemyPrimaryUnitID(row)) or "nil") ..
-                " barsUnit=" .. tostring(row and row._barsUnit or "nil")
-            )
-        end
-    end
-
-    if not cur or not maxv then
+    local okH, cur = pcall(UnitHealth, readUnit)
+    local okM, maxv = pcall(UnitHealthMax, readUnit)
+    if not okH or not okM or type(cur) ~= "number" or type(maxv) ~= "number" or maxv <= 0 then
         return
     end
 
     row._lastHpCur = cur
     row._lastHpMax = maxv
-    if not cur or not maxv then return end
 
-    local mode = GetSetting("bgeHealthTextMode", 2)
-
-    -- Keep bar updates simple (no fill-width math)
     pcall(row.hp.SetMinMaxValues, row.hp, 0, maxv)
     pcall(row.hp.SetValue, row.hp, cur)
 
-    -- Throttle text updates (big perf win in busy fights)
-    local now = GetTime()
-    local lastT = row._lastHpTextAt or 0
-    if (now - lastT) >= 0.50 then
-        local txt
-        local hpTxtFromPlateNumeric = false
+    local mode = GetSetting("bgeHealthTextMode", 2)
+    local txt
 
-        -- Mode 3 ("%"): prefer UnitHealthPercent (0..100 via curve), else use nameplate fill geometry.
-        if mode == 3 then
-            -- 12.0+/Midnight: UnitHealthPercent can still be secret on hostile units.
-            -- If it's non-secret (e.g. friendlies/self), use it to avoid any cur/max math.
-            local pctV = nil
-
-            -- 0) Try GUID API first (returns number percentHealth or nil)
-            if UnitPercentHealthFromGUID and row and row.guid then
-                local okG, gv = pcall(UnitPercentHealthFromGUID, row.guid)
-                if okG then
-                    local ng = tonumber(gv)
-                    if ng == nil then
-                    else
-                        -- Some builds may return 0..1; scale if needed.
---                        if ng <= 1.001 then print("% from guid not %") end ## this was compared and is secret so blew up
-                        pctV = ng
-                    end
-                end
-            end
-
-            if UnitHealthPercent then
-                -- Prefer 0..100 via curve when available; otherwise API may return 0..1.
-                local curve = (CurveConstants and CurveConstants.ScaleTo100) or nil
-                local okP, v = pcall(UnitHealthPercent, readUnit, true, curve)
-                local nv = okP and tonumber(v) or nil
-                    if nv == nil then
-                    else
-                    -- If curve wasn't available, API may return 0..1; scale it.
---                    if nv <= 1.001 then print("% from health percent not %") end ## this was compared and is secret so blew up
-                    pctV = nv
-                end
-            end
-
-            if pctV ~= nil then
-                local okS, s = pcall(string.format, "%.0f%%", pctV)
-                if okS then txt = s end
-            end
-
-            -- Prefer nameplate healthbar geometry for enemies (our row.hp may be meaningless if SetValue/Max failed).
-            if txt == nil and self._mode ~= "arena" and IsNameplateUnit(readUnit) then
-                local sb = row._hpSB
-                if sb == nil then
-                    sb = FindPlateHealthStatusBar(readUnit)
-                    row._hpSB = sb or false
-                elseif sb == false then
-                    sb = nil
-                end
-                if sb then
-                    local pct = SafePercentFromStatusBarFill(sb)
-                    if pct then txt = pct .. "%" end
-                end
-            end
-
-            -- Fallback: our own bar geometry (only if everything else failed).
-            if txt == nil then
-                local pct = SafePercentFromStatusBarFill(row.hp)
-                if pct then txt = pct .. "%" end
-            end
-
-            -- Last resort: legacy formatter (may fail on secrets; keep pcall).
-            if txt == nil then
-				-- If numbers are secret, do NOT format/compare them. Prefer display-only paths.
-				if secretNums then
-					-- 1) If we have nameplate numeric text, we already try it elsewhere.
-					-- 2) Otherwise fall back to fill-geometry percent (doesn't touch secret numbers).
-					if self._mode ~= "arena" and IsNameplateUnit(readUnit) then
-						local sb = row._hpSB
-						if sb and sb ~= false then
-							local pct = SafePercentFromStatusBarFill(sb)
-							if pct then txt = pct .. "%" end
-						end
-					end
-				end
-				if txt == nil then
-					local okT, t = pcall(FormatHealthText, cur, maxv, mode)
-					if okT then txt = t end
-				end
-            end
-        else
-            -- Mode 1 ("Current") and Mode 2 ("Current/Total")
-            -- Prefer stable bar-driven text first. Blizzard numeric plate text is only a fallback.
-            if self._mode ~= "arena" and IsNameplateUnit(readUnit) then
-                local sb = row._hpSB
-                if sb == nil then
-                    sb = FindPlateHealthStatusBar(readUnit)
-                    row._hpSB = sb or false
-                elseif sb == false then
-                    sb = nil
-                end
-            end
-
-            if txt == nil then
-                local sb = row._hpSB
-
-                -- Primary path: exact values only when they are not secret.
-                if txt == nil and not secretNums then
-                    local okT, t = pcall(FormatHealthText, cur, maxv, mode)
-                    if okT then txt = t end
-                end
-
-                -- Secondary path: use Blizzard numeric nameplate text if it exists.
-                if txt == nil and sb and sb ~= false then
-                    local s = SafePlateHealthNumericText(sb)
-                    if s then
-                        hpTxtFromPlateNumeric = true
-                        txt = s
-                    end
-                end
-
-                -- Last stable fallback for hostile secret values: dynamic percent from bar fill.
-                if txt == nil and secretNums and self._mode ~= "arena" and IsNameplateUnit(readUnit) then
-                    if sb and sb ~= false then
-                        local pct = SafePercentFromStatusBarFill(sb)
-                        if pct then txt = pct .. "%" end
-                    end
-                end
+    if mode == 3 then
+        local pct
+        if UnitHealthPercent then
+            local curve = (CurveConstants and CurveConstants.ScaleTo100) or nil
+            local okP, v = pcall(UnitHealthPercent, readUnit, true, curve)
+            if okP and type(v) == "number" then
+                pct = v
             end
         end
-
-        -- Don't clear on failure; keep last known text so it doesn't flicker/gap.
-        if txt ~= nil then
-            row._lastHpTextAt = now
-            -- If txt is unusable, SetText will fail and we keep the old value.
-            local okSet = pcall(row.hpText.SetText, row.hpText, txt)
-            if not okSet and GetSetting("bgeDebug", false) then
-                self._dbgHpText = self._dbgHpText or { plateAttempt = 0, plateFail = 0, anyFail = 0 }
-                self._dbgHpText.anyFail = self._dbgHpText.anyFail + 1
-                if hpTxtFromPlateNumeric then
-                    self._dbgHpText.plateAttempt = self._dbgHpText.plateAttempt + 1
-                    self._dbgHpText.plateFail = self._dbgHpText.plateFail + 1
-                    DPrint("hptext_plate_set_fail",
-                        ("hpText:SetText(plateNumeric) FAIL  anyFail=%d  plateFail=%d/%d  readUnit=%s  guid=%s"):format(
-                            self._dbgHpText.anyFail,
-                            self._dbgHpText.plateFail,
-                            self._dbgHpText.plateAttempt,
-                            tostring(readUnit),
-                            tostring(row and row.guid)
-                        )
-                    )
-                else
-                    DPrint("hptext_set_fail", ("hpText:SetText FAIL  anyFail=%d  readUnit=%s  guid=%s"):format(
-                        self._dbgHpText.anyFail, tostring(readUnit), tostring(row and row.guid)
-                    ))
-                end
-            elseif hpTxtFromPlateNumeric and GetSetting("bgeDebug", false) then
-                self._dbgHpText = self._dbgHpText or { plateAttempt = 0, plateFail = 0, anyFail = 0 }
-                self._dbgHpText.plateAttempt = self._dbgHpText.plateAttempt + 1
-            end
-        else
+        if pct == nil and maxv > 0 then
+            pct = math.floor((cur / maxv) * 100 + 0.5)
         end
+        if pct ~= nil then
+            txt = tostring(math.floor(pct + 0.5)) .. "%"
+        end
+    elseif mode == 2 then
+        txt = tostring(cur) .. "/" .. tostring(maxv)
+    else
+        txt = tostring(cur)
     end
-    -- Throttle clip updates (geometry calls are expensive)
-    local lastC = row._lastClipAt or 0
-    if (now - lastC) >= 5 then
-        row._lastClipAt = now
-        UpdateNameClipToHPFill(row)
+
+    if txt then
+        pcall(row.hpText.SetText, row.hpText, txt)
     end
+
+    UpdateNameClipToHPFill(row)
 end
 
 function BGE:UpdatePower(row, unit)
+    local readUnit = unit
     if self._mode ~= "arena" and row and row.unit and UnitExists(row.unit) then
-        unit = row.unit
+        readUnit = row.unit
     end
     if not GetSetting("bgeShowPower", true) then
         row.power:Hide()
         return
     end
-
-    -- Cache invalidation: nameplate frames get recycled.
-    if row._barsUnit ~= unit then
-        row._barsUnit = unit
-        row._hpSB = nil
-        row._pwrSB = nil
-    end
-
-    local cur, maxv, r, g, b
-
-    -- Prefer cached nameplate power bar (avoids child scanning every event).
-    if self._mode ~= "arena" and IsNameplateUnit(unit) then
-        if row._pwrSB == false then
-            -- negative cached: don't rescan every event
-        elseif row._pwrSB then
-            cur, maxv = SafeStatusBarValues(row._pwrSB)
-            if cur and maxv and row._pwrR then
-                r, g, b = row._pwrR, row._pwrG, row._pwrB
-            end
-        else
-            local sb, rr, gg, bb = FindPlatePowerStatusBar(unit)
-            row._pwrSB = sb or false
-            row._pwrR, row._pwrG, row._pwrB = rr, gg, bb
-            if sb then
-                cur, maxv = SafeStatusBarValues(sb)
-                r, g, b = rr, gg, bb
-            end
-        end
-    end
-
-    if not cur or not maxv then
-        cur, maxv, r, g, b = SafeUnitPower(unit)
-    end
-
-    if not cur or not maxv then
+    if not readUnit or not UnitExists(readUnit) then
         row.power:Hide()
         return
     end
 
-    -- 12.0+/Midnight: cur/maxv may be protected "secret" numbers.
+    local okC, cur = pcall(UnitPower, readUnit)
+    local okM, maxv = pcall(UnitPowerMax, readUnit)
+    if not okC or not okM or type(cur) ~= "number" or type(maxv) ~= "number" or maxv <= 0 then
+        row.power:Hide()
+        return
+    end
+
+    local r, g, b = 0.0, 0.55, 1.0
+    local okT, powerType = pcall(UnitPowerType, readUnit)
+    if okT and PowerBarColor and PowerBarColor[powerType] then
+        local c = PowerBarColor[powerType]
+        r, g, b = c.r or r, c.g or g, c.b or b
+    end
+
     pcall(row.power.SetMinMaxValues, row.power, 0, maxv)
     pcall(row.power.SetValue, row.power, cur)
     pcall(row.power.SetStatusBarColor, row.power, r, g, b, 0.9)
