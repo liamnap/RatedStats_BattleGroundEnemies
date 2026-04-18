@@ -4291,11 +4291,6 @@ function BGE:HandlePlateAdded(unit)
         row._pwrSBAt = nil
     end
 
-    if not InLockdown() then
-        row:SetAttribute("unit", unit)
-    else
-    end
-
     self:UpdateIdentity(row, unit)
     self:UpdateHealth(row, unit)
     self:UpdatePower(row, unit)
