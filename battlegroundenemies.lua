@@ -4264,6 +4264,21 @@ function BGE:HandlePlateAdded(unit)
     end
 
     if not row then
+        if C_Timer and C_Timer.After then
+            self._plateBindRetryPending = self._plateBindRetryPending or {}
+            if not self._plateBindRetryPending[unit] then
+                self._plateBindRetryPending[unit] = true
+                local u = unit
+                C_Timer.After(0.1, function()
+                    local b = _G.RSTATS_BGE
+                    if not b then return end
+                    b._plateBindRetryPending[u] = nil
+                    if UnitExists(u) and IsNameplateUnit(u) and not UnitIsFriend("player", u) then
+                        b:HandlePlateAdded(u)
+                    end
+                end)
+            end
+        end
         return
     end
 
