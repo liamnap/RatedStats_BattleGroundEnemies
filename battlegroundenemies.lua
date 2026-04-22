@@ -2216,7 +2216,7 @@ end
 function BGE:SeedRowsFromScoreboard()
     -- BG only (arena uses arena1..arena5)
     if self._mode == "arena" then return end
-    if not IsInPVPInstance() then return end
+    if not IsInPVPInstance() then
         DPrintMissing("SEED_SKIP_NOPVP", "SeedRowsFromScoreboard skip: not in pvp")
         return
     end
