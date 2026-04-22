@@ -1246,8 +1246,7 @@ local function GetPlayerDB()
 
     local RS = _G.RSTATS
     if not RS or not RS.Database then return nil end
-    local key = SafeUnitFullName("player")
-    if not key then return nil end
+    local key = UnitName("player") .. "-" .. GetRealmName()
     local db = RS.Database[key]
     if not db then return nil end
     db.settings = db.settings or {}
