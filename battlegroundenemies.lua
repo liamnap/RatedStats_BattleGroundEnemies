@@ -1052,7 +1052,9 @@ function BGE:BuildRosterFromScoreboard()
         -- If Blizzard APIs can't reliably tell our *match* faction (merc / cross-faction),
         -- derive it from the scoreboard row for the local player.
         if n > 0 then
-            local pFull, pName = SafeUnitFullName("player")
+            local pName = UnitName("player")
+            local pRealm = GetRealmName and GetRealmName() or nil
+            local pFull = (pName and pRealm and (pName .. "-" .. pRealm)) or pName
             if pName then
                 for ii = 1, n do
                     local okP, infoP = pcall(_G.C_PvP.GetScoreInfo, ii)
