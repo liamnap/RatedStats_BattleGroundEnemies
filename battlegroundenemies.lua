@@ -3268,9 +3268,6 @@ function BGE:UpdateIdentity(row, unit)
     end
 
     -- Fallback to UnitName/UnitClass only if scoreboard lookup failed.
-    if not name then
-        name = SafeUnitName(unit)
-    end
     local classLoc
     if not classFile then
         classLoc, classFile = SafeUnitClass(unit)
