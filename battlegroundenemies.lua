@@ -1236,6 +1236,29 @@ function BGE:BuildRosterFromScoreboard()
     -- Legacy fallback (no GUID): keep existing class list behaviour.
     -- This won't be able to GUID-match nameplates, but it preserves old behaviour.
     self:RebuildScoreCache()
+
+    do
+        local rosterN = (self.roster and #self.roster) or 0
+        local scoreTotal = 0
+        if _G.GetNumBattlefieldScores then
+            local okT, total = pcall(_G.GetNumBattlefieldScores)
+            if okT and type(total) == "number" then
+                scoreTotal = total
+            end
+        end
+
+        local first = self.roster and self.roster[1] or nil
+        DPrint("BUILD_ROSTER_SUMMARY",
+            "BuildRosterFromScoreboard scoreTotal=" .. tostring(scoreTotal) ..
+            " rosterN=" .. tostring(rosterN) ..
+            " expected=" .. tostring(self._expectedBGTeamSize or self._expectedBGTeamSizeGuess or "nil") ..
+            " first.guid=" .. tostring(first and SafeToString(first.guid) or "nil") ..
+            " first.name=" .. tostring(first and SafeToString(first.name) or "nil") ..
+            " first.full=" .. tostring(first and SafeToString(first.fullName) or "nil") ..
+            " first.class=" .. tostring(first and SafeToString(first.classToken) or "nil")
+        )
+    end
+
 end
 
 local function GetPlayerDB()
@@ -2194,21 +2217,54 @@ function BGE:SeedRowsFromScoreboard()
     -- BG only (arena uses arena1..arena5)
     if self._mode == "arena" then return end
     if not IsInPVPInstance() then return end
-    if self._scoreLocked then return end
+        DPrintMissing("SEED_SKIP_NOPVP", "SeedRowsFromScoreboard skip: not in pvp")
+        return
+    end
+    if self._scoreLocked then
+        DPrintMissing("SEED_SKIP_LOCKED", "SeedRowsFromScoreboard skip: scoreLocked=1")
+        return
+    end
 
     -- Throttle: UPDATE_BATTLEFIELD_SCORE can fire very frequently in busy fights.
     local now = GetTime()
     local minGap = (self._matchStarted and 5.0) or 1.0
     if self._lastSeedAt and (now - self._lastSeedAt) < minGap then
+        DPrintMissing("SEED_SKIP_THROTTLE",
+            "SeedRowsFromScoreboard skip: throttled dt=" .. string.format("%.2f", now - self._lastSeedAt) ..
+            " minGap=" .. string.format("%.2f", minGap)
+        )
         return
     end
     self._lastSeedAt = now
+
+    local scoreTotal = 0
+    if _G.GetNumBattlefieldScores then
+        local okT, total = pcall(_G.GetNumBattlefieldScores)
+        if okT and type(total) == "number" then
+            scoreTotal = total
+        end
+    end
+
+    DPrint("SEED_ENTER",
+        "SeedRowsFromScoreboard enter scoreTotal=" .. tostring(scoreTotal) ..
+        " expected=" .. tostring(self._expectedBGTeamSize or "nil") ..
+        " guess=" .. tostring(self._expectedBGTeamSizeGuess or "nil") ..
+        " seeded=" .. Bool01(self._seededThisBG) ..
+        " seedCount=" .. tostring(self._seedCount or 0) ..
+        " matchStarted=" .. Bool01(self._matchStarted) ..
+        " scoreLocked=" .. Bool01(self._scoreLocked)
+    )
 
     -- Build roster from the scoreboard.
     self:BuildRosterFromScoreboard()
 
     local rosterN = (self.roster and #self.roster) or 0
     local expected = self._expectedBGTeamSize or self._expectedBGTeamSizeGuess
+
+    DPrint("SEED_AFTER_BUILD",
+        "SeedRowsFromScoreboard after build rosterN=" .. tostring(rosterN) ..
+        " expected=" .. tostring(expected or "nil")
+    )
 
     -- Prep phase: once we have a full enemy roster, stop full reseed churn.
     -- Keep the existing rows/binds and just do a bind scan.
@@ -2395,6 +2451,11 @@ function BGE:SeedRowsFromScoreboard()
     end
 
     if max == 0 then
+        DPrintMissing("SEED_MAX_ZERO",
+            "SeedRowsFromScoreboard max=0 rosterN=" .. tostring(rosterN or 0) ..
+            " maxPlates=" .. tostring(self.maxPlates or 0) ..
+            " expected=" .. tostring(self._expectedBGTeamSize or self._expectedBGTeamSizeGuess or "nil")
+        )
         self._seededThisBG = false
         self._seedCount = 0
         self._expectedBGTeamSize = nil
@@ -2562,6 +2623,14 @@ function BGE:SeedRowsFromScoreboard()
 
     self._seededThisBG = true
     self._seedCount = max
+
+    DPrint("SEED_DONE",
+        "SeedRowsFromScoreboard seeded max=" .. tostring(max) ..
+        " rosterN=" .. tostring(rosterN) ..
+        " guidRows=" .. tostring(self.rowByGuid and next(self.rowByGuid) and "Y" or "N") ..
+        " fullNameRows=" .. tostring(self.rowByFullName and next(self.rowByFullName) and "Y" or "N") ..
+        " baseNameRows=" .. tostring(self.rowByBaseName and next(self.rowByBaseName) and "Y" or "N")
+    )
 
     -- After reseed, immediately bind any visible nameplates to rows.
     for i = 1, (self.maxPlates or 40) do
@@ -3190,6 +3259,29 @@ function BGE:UpdateRowVisibilities()
                 row:SetAlpha(0)
             end
         end
+    end
+
+    do
+        local visible = 0
+        local identified = 0
+        for i = 1, (self.maxPlates or 40) do
+            local row = self.rows and self.rows[i] or nil
+            if row and not row._preview then
+                if row._seenIdentity then identified = identified + 1 end
+                if row:IsShown() and (row:GetAlpha() or 0) > 0 then
+                    visible = visible + 1
+                end
+            end
+        end
+        DPrint("ROW_VIS",
+            "UpdateRowVisibilities visible=" .. tostring(visible) ..
+            " identified=" .. tostring(identified) ..
+            " seedCount=" .. tostring(self._seedCount or 0) ..
+            " seeded=" .. Bool01(self._seededThisBG) ..
+            " matchStarted=" .. Bool01(self._matchStarted) ..
+            " oor=" .. Bool01(self._oorEnabled) ..
+            " hiddenByTeamFail=" .. Bool01(self._teamDidNotFullyEnter)
+        )
     end
 end
 
@@ -3905,6 +3997,19 @@ function BGE:HandlePlateAdded(unit)
     if not GetSetting("bgeEnabled", true) then return end
     if not IsInPVPInstance() then return end
 
+    local guid = SafeUnitGUID(unit)
+    local full = guid and ScoreFullNameFromGuid(guid) or nil
+    local disp1, disp2 = GetNameplateDisplayNames(unit)
+    DPrint("PLATE_ADD:" .. tostring(unit),
+        "HandlePlateAdded unit=" .. tostring(unit) ..
+        " guid=" .. tostring(guid or "nil") ..
+        " scoreFull=" .. tostring(full or "nil") ..
+        " disp1=" .. tostring(SafeToString(disp1) or "nil") ..
+        " disp2=" .. tostring(SafeToString(disp2) or "nil") ..
+        " rowByGuid=" .. Bool01(guid and self.rowByGuid and self.rowByGuid[guid]) ..
+        " rowByFull=" .. Bool01(full and self.rowByFullName and self.rowByFullName[full])
+    )
+
     -- Prefer GUID->row match, but GUID is often restricted on enemy nameplates in 12.0.
     -- If GUID is missing/unusable, fall back to the displayed name text on the nameplate frame.
     local row = nil
@@ -4353,6 +4458,14 @@ function BGE:RefreshVisibility()
         self:UpdateFrameTeamTint()
         -- Keep scoreboard cache warm while in a PvP instance.
         if IsInPVPInstance() then
+            DPrint("APPLY_PVP",
+                "ApplySettings inPVP=1 mode=" .. tostring(self._mode) ..
+                " expected=" .. tostring(self._expectedBGTeamSize or "nil") ..
+                " guess=" .. tostring(self._expectedBGTeamSizeGuess or "nil") ..
+                " latchedWant=" .. tostring(self._latchedBGWant or "nil") ..
+                " latchedKind=" .. tostring(self._latchedBGKind or "nil")
+            )
+
             -- Ensure the Blizzard PvP scoreboard addon is loaded so GetNumBattlefieldScores/GetBattlefieldScore
             -- (and RequestBattlefieldScoreData) exist even before the user opens the scoreboard.
             -- Without this, seeding won't happen until the scoreboard UI is shown.
@@ -4363,6 +4476,12 @@ function BGE:RefreshVisibility()
                     pcall(_G.LoadAddOn, "Blizzard_PVPMatch")
                 end
             end
+
+            DPrint("APPLY_SCORE_FUNCS",
+                "scoreFns num=" .. Bool01(_G.GetNumBattlefieldScores) ..
+                " score=" .. Bool01(_G.GetBattlefieldScore) ..
+                " request=" .. Bool01(_G.RequestBattlefieldScoreData)
+            )
 
             self:RebuildScoreCache()
             if _G.RequestBattlefieldScoreData then
