@@ -1052,23 +1052,20 @@ function BGE:BuildRosterFromScoreboard()
         -- If Blizzard APIs can't reliably tell our *match* faction (merc / cross-faction),
         -- derive it from the scoreboard row for the local player.
         if n > 0 then
-            local pName, pRealm = nil, nil
-            if UnitFullName then
-                pName, pRealm = UnitFullName("player")
-            else
-                pName = UnitName and UnitName("player") or nil
-                pRealm = GetRealmName and GetRealmName() or nil
-            end
-            local pFull = (pName and pRealm and (pName .. "-" .. pRealm)) or pName
+            local pFull, pName = SafeUnitFullName("player")
             if pName then
                 for ii = 1, n do
                     local okP, infoP = pcall(_G.C_PvP.GetScoreInfo, ii)
                     if (not okP or type(infoP) ~= "table") and _G.GetBattlefieldScore then
                         local nameL, _, _, _, _, factionL = _G.GetBattlefieldScore(ii)
-                        if nameL ~= nil then
+                        local nameLS = SafeNonEmptyString(nameL)
+                        local factionLI = NormalizeFactionIndex(factionL)
+                        if nameLS or factionLI ~= nil then
                             infoP = infoP or {}
-                            infoP.name = infoP.name or nameL
-                            infoP.faction = infoP.faction or factionL
+                            infoP.name = infoP.name or nameLS
+                            if infoP.faction == nil and factionLI ~= nil then
+                                infoP.faction = factionLI
+                            end
                             okP = true
                         end
                     end
@@ -1090,14 +1087,22 @@ function BGE:BuildRosterFromScoreboard()
             -- BG start: GetScoreInfo can be nil/error for some indices. Don't drop the slot; use GetBattlefieldScore.
             if (not ok or type(info) ~= "table") and _G.GetBattlefieldScore then
                 local nameL, _, _, _, _, factionL, rankL, raceL, _, classTokenL, _, _, _, _, _, specNameL = _G.GetBattlefieldScore(i)
-                if nameL or classTokenL or factionL ~= nil then
+                local nameLS = SafeNonEmptyString(nameL)
+                local classTokenLS = SafeNonEmptyString(classTokenL)
+                local raceLS = SafeNonEmptyString(raceL)
+                local specNameLS = SafeNonEmptyString(specNameL)
+                local honorLevelL = tonumber(SafeToString(rankL))
+                local factionLI = NormalizeFactionIndex(factionL)
+                if nameLS or classTokenLS or raceLS or specNameLS or honorLevelL or factionLI ~= nil then
                     info = info or {}
-                    info.name       = info.name       or nameL
-                    info.classToken = info.classToken or classTokenL
-                    info.raceName   = info.raceName   or raceL
-                    info.talentSpec = info.talentSpec or specNameL
-                    info.honorLevel = info.honorLevel or rankL
-                    info.faction    = info.faction    or factionL
+                    info.name       = info.name       or nameLS
+                    info.classToken = info.classToken or classTokenLS
+                    info.raceName   = info.raceName   or raceLS
+                    info.talentSpec = info.talentSpec or specNameLS
+                    info.honorLevel = info.honorLevel or honorLevelL
+                    if info.faction == nil and factionLI ~= nil then
+                        info.faction = factionLI
+                    end
                     ok = true
                 end
             end
@@ -1109,9 +1114,8 @@ function BGE:BuildRosterFromScoreboard()
                 -- If C_PvP.GetScoreInfo faction is secret/unreadable, use GetBattlefieldScore faction instead.
                 if (not fi) and _G.GetBattlefieldScore then
                     local _, _, _, _, _, factionL = _G.GetBattlefieldScore(i)
-                    if factionL ~= nil then
-                        fi = NormalizeFactionIndex(factionL)
-                    end
+                    local factionLI = NormalizeFactionIndex(factionL)
+                    if factionLI ~= nil then fi = factionLI end
                 end
 
                 if myFI and fi and fi == myFI then
@@ -1141,7 +1145,8 @@ function BGE:BuildRosterFromScoreboard()
                         if not raceName then raceName = SafeNonEmptyString(raceL) end
                         if not specID then specID = SafeNonEmptyString(specNameL) end
                         if honorLevel == 0 and rankL then honorLevel = tonumber(SafeToString(rankL)) or honorLevel end
-                        if factionL ~= nil then factionIndex = NormalizeFactionIndex(factionL) end
+                        local factionLI = NormalizeFactionIndex(factionL)
+                        if factionLI ~= nil then factionIndex = factionLI end
                     end
 
                     local classID = (classToken and self.ClassTokenToID and self.ClassTokenToID[classToken]) or 0
@@ -1241,7 +1246,8 @@ local function GetPlayerDB()
 
     local RS = _G.RSTATS
     if not RS or not RS.Database then return nil end
-    local key = UnitName("player") .. "-" .. GetRealmName()
+    local key = SafeUnitFullName("player")
+    if not key then return nil end
     local db = RS.Database[key]
     if not db then return nil end
     db.settings = db.settings or {}
@@ -2085,9 +2091,10 @@ function BGE:RebuildScoreCache()
     local n = GetNumBattlefieldScores() or 0
     for i = 1, n do
         local tuple = { GetBattlefieldScore(i) }
-        local nameRealm = tuple[1]
-        if type(nameRealm) == "string" and nameRealm ~= "" then
-            local base = nameRealm:match("^[^-]+") or nameRealm
+        local nameRealm = SafeNonEmptyString(tuple[1])
+        if nameRealm then
+            local okBase, base = pcall(function() return nameRealm:match("^[^-]+") end)
+            base = (okBase and base) or nameRealm
             local rec = self.scoreCache[base]
             if not rec then
                 rec = { count = 0 }
