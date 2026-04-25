@@ -669,6 +669,17 @@ local function GetPlayerDB()
     return db
 end
 
+local BGE_PROFILE_SUFFIX = {
+    bgePreview       = "Preview",
+    bgePreviewCount  = "PreviewCount",
+    bgeColumns       = "Columns",
+    bgeRowsPerCol    = "RowsPerCol",
+    bgeColGap        = "ColGap",
+    bgeRowWidth      = "RowWidth",
+    bgeRowHeight     = "RowHeight",
+    bgeRowGap        = "RowGap",
+}
+
 local function ResolvePreviewProfilePrefix(db)
     -- Outside PvP, you can only preview one profile at a time.
     -- Pick the first enabled preview toggle in a deterministic order.
