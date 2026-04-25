@@ -61,7 +61,6 @@ local GetSetting
 local UpdateNameClipToHPFill
 local SafeUnitGUID
 local GetNameplateDisplayNames
-local UnitPID
 local SafeStatusBarValues
 local NormalizeFactionIndex
 local UnitStillMatchesRow
@@ -99,6 +98,8 @@ local function DPrintMissing(key, msg)
     BGE._dbgLast[key] = now
     print("|cffb69e86[RSTATS-BGE]|r " .. msg)
 end
+
+
 
 local function Bool01(v) return v and "1" or "0" end
 
@@ -191,8 +192,8 @@ end
 
 -- Debug helper: print what keys we actually seeded into rowByGuid.
 
--- Debug: compare nameplate identity vs scoreboard identity for the same GUID.
--- This is designed to NOT crash even if GUID/name are secret values.
+
+
 
 local function IsNameplateUnit(unit)
     return type(unit) == "string" and unit:match("^nameplate%d+$") ~= nil
@@ -247,21 +248,6 @@ local function SafeUnitFullName(unit)
     return n, n
 end
 
--- Resolve a scoreboard fullName ("Name-Realm") from a GUID without touching UnitName.
--- This is the most reliable bridge on 12.0+/Midnight when UnitName/UnitGUID can be restricted.
-local function ScoreFullNameFromGuid(guidRaw)
-    if not guidRaw then return nil end
-    if not (_G.C_PvP and _G.C_PvP.GetScoreInfoByPlayerGuid) then return nil end
-    local ok, info = pcall(_G.C_PvP.GetScoreInfoByPlayerGuid, guidRaw)
-    if not ok or type(info) ~= "table" then return nil end
-    return SafeNonEmptyString(info.name)
-end
-
-SafeUnitGUID = function(unit)
-    local ok, guid = pcall(UnitGUID, unit)
-    return SafeToString(guid)
-end
-
 local function NormalizeRaceID(raceID)
     raceID = tonumber(raceID) or 0
     -- Collapse known “multi-ID” races
@@ -279,8 +265,7 @@ end
 local function GetUnitTrueFactionIndex(unit)
     local fac = UnitFactionGroup and UnitFactionGroup(unit) or nil
     local idx = NormalizeFactionIndex(fac)
-    -- Mercenary flips the “visual” faction; scoreboard uses the match team.
-    if UnitIsMercenary and UnitIsMercenary(unit) then
+        if UnitIsMercenary and UnitIsMercenary(unit) then
         idx = (idx == 0 and 1) or 0
     end
     return idx
@@ -310,132 +295,9 @@ NormalizeFactionIndex = function(v)
     return nil
 end
 
-local function CalculatePIDFull(raceID, classID, level, factionIndex, sex, honorLevel)
-    raceID = NormalizeRaceID(raceID)
-    classID = tonumber(classID) or 0
-    level = tonumber(level) or 0
-    factionIndex = tonumber(factionIndex) or 0
-    sex = tonumber(sex) or 0
-    honorLevel = tonumber(honorLevel) or 0
-    -- Multipliers chosen to minimize collisions
-    return (raceID * 100000000000)
-        + (classID * 1000000000)
-        + (level * 10000000)
-        + (factionIndex * 1000000)
-        + (sex * 100000)
-        + honorLevel
-end
 
 
-UnitPID = function(unit)
-    if not UnitExists(unit) then return 0 end
-    local okR, _, _, raceID = pcall(UnitRace, unit)
-    local okC, _, _, classID = pcall(UnitClass, unit)
-    local okL, level = pcall(UnitLevel, unit)
-    local okS, sex = pcall(UnitSex, unit)
-    local okH, honor = pcall(UnitHonorLevel, unit)
-    if not okC or not classID then return 0 end
-    return CalculatePIDFull(
-        (okR and raceID) or 0,
-        classID or 0,
-        (okL and level) or 0,
-        GetUnitTrueFactionIndex(unit),
-        (okS and sex) or 0,
-        (okH and honor) or 0
-    )
-end
 
--- Seed-compatible PID:
--- Scoreboard seed does NOT provide reliable level/sex, so seeded rows effectively use level=0 sex=0.
--- This must be used for nameplate -> row matching, otherwise PID will never hit.
-UnitPIDSeedCompat = function(unit)
-    if not UnitExists(unit) then return 0 end
-    local okR, _, _, raceID = pcall(UnitRace, unit)
-    local okC, _, _, classID = pcall(UnitClass, unit)
-    local okH, honor = pcall(UnitHonorLevel, unit)
-    if not okC or not classID then return 0 end
-    return CalculatePIDFull(
-        (okR and raceID) or 0,
-        classID or 0,
-        0, -- level (seed-compatible)
-        GetUnitTrueFactionIndex(unit),
-        0, -- sex (seed-compatible)
-        (okH and honor) or 0
-    )
-end
-
-GetNameplateDisplayNames = function(unit)
-    if not (_G.C_NamePlate and _G.C_NamePlate.GetNamePlateForUnit) then return nil, nil end
-    local okP, plate = pcall(_G.C_NamePlate.GetNamePlateForUnit, unit)
-    if not okP or not plate then return nil, nil end
-
-    local uf = plate.UnitFrame
-    if not uf then return nil, nil end
-
-    local disp = nil
-    local function TryFS(fs)
-        if disp then return end
-        if not fs or not fs.GetText then return end
-        local okT, t = pcall(fs.GetText, fs)
-        local s = SafeToString(t)
-        if s and s ~= "" then
-            disp = s
-        end
-    end
-
-    -- Common name fields across different nameplate styles
-    TryFS(uf.name)
-    TryFS(uf.Name)
-    if uf.healthBar then
-        TryFS(uf.healthBar.name)
-        TryFS(uf.healthBar.unitName)
-        TryFS(uf.healthBar.UnitName)
-    end
-
-    -- Last resort: scan all regions for a FontString that looks like "Name-Realm"
-    if not disp and uf.GetRegions then
-        local regions = { uf:GetRegions() }
-        for i = 1, #regions do
-            local r = regions[i]
-            if r and r.GetObjectType then
-                local okOT, ot = pcall(r.GetObjectType, r)
-                if okOT and ot == "FontString" then
-                    TryFS(r)
-                    if disp then break end
-                end
-            end
-        end
-    end
-
-    if not disp then return nil, nil end
-    local okB, base = pcall(function() return disp:match("^[^-]+") end)
-    local dispBase = (okB and base) or disp
-    return disp, dispBase
-end
-
--- Nameplate units recycle. UnitExists(nameplateX) can stay true while the player behind it changes.
-UnitStillMatchesRow = function(self, row, unit)
-    if not unit or not UnitExists(unit) then return false end
-
-    -- Prefer GUID if we can read it.
-    if row and row.guid then
-        local g = SafeUnitGUID(unit)
-        if g and g == row.guid then
-            return true
-        end
-    end
-
-    -- Fallback to current displayed name on the plate.
-    local disp, dispBase = GetNameplateDisplayNames(unit)
-    if row and row.fullName and disp and disp == row.fullName then
-        return true
-    end
-    if row and row.name and dispBase and dispBase == row.name then
-        return true
-    end
-
-    return false
-end
 
 local function SafePlateBars(unit)
     if not (_G.C_NamePlate and _G.C_NamePlate.GetNamePlateForUnit) then return nil, nil end
@@ -784,66 +646,28 @@ local function GetClassRGB(classFile)
     return 0, 0, 0
 end
 
-local function ExtractClassFileFromScoreTuple(t)
-    if type(t) ~= "table" then return nil end
-    for i = 1, #t do
-        local v = t[i]
-        if type(v) == "string" and v ~= "" then
-            if (RAID_CLASS_COLORS and RAID_CLASS_COLORS[v]) then
-                return v
-            end
-            if (C_ClassColor and C_ClassColor.GetClassColor) then
-                local ok, c = pcall(C_ClassColor.GetClassColor, v)
-                if ok and c then
-                    return v
-                end
-            end
-        end
-    end
-    return nil
-end
 
--- Prefer C_PvP.GetScoreInfo(i) (has GUID + classToken + spec/role on modern clients).
--- Fall back to legacy GetBattlefieldScore tuple parsing if needed (less reliable).
+
+
 
 local function GetPlayerDB()
-    -- Ensure SavedVariables are loaded (RatedStats wires Database in LoadData()).
     if type(_G.LoadData) == "function" then
         pcall(_G.LoadData)
     end
 
     local RS = _G.RSTATS
     if not RS or not RS.Database then return nil end
-    local key = UnitName("player") .. "-" .. GetRealmName()
+
+    local name = UnitName("player")
+    local realm = GetRealmName and GetRealmName() or nil
+    local key = (name and realm and (name .. "-" .. realm)) or name
+    if not key then return nil end
+
     local db = RS.Database[key]
     if not db then return nil end
     db.settings = db.settings or {}
     return db
 end
-
-
--- Per-enemy-team-size layout profiles.
---
--- Profiles:
---   Rated (8v8)  -> bgeRated*
---   10v10        -> bge10*
---   15v15        -> bge15*
---   >15v15       -> bgeLarge*
---
--- These replace the old single set of layout sliders.
---
--- Backwards compatibility: if the new per-profile key isn't set yet,
--- fall back to the legacy single-key (e.g. bgeRowWidth).
-local BGE_PROFILE_SUFFIX = {
-    bgePreview       = "Preview",
-    bgePreviewCount  = "PreviewCount",
-    bgeColumns       = "Columns",
-    bgeRowsPerCol    = "RowsPerCol",
-    bgeColGap        = "ColGap",
-    bgeRowWidth      = "RowWidth",
-    bgeRowHeight     = "RowHeight",
-    bgeRowGap        = "RowGap",
-}
 
 local function ResolvePreviewProfilePrefix(db)
     -- Outside PvP, you can only preview one profile at a time.
@@ -1213,7 +1037,7 @@ local function MakeRow(parent, plateIndex)
     -- IMPORTANT: do not toggle EnableMouse later; it can be blocked under lockdown.
     row:EnableMouse(true)
     row:RegisterForClicks(GetCVarBool("ActionButtonUseKeyDown") and "AnyDown" or "AnyUp")
-    row:SetAttribute("type1", "macro")
+    row:SetAttribute("type1", nil)
     row:SetAttribute("macrotext", nil)
     row.plateIndex = nil
 
@@ -1225,9 +1049,7 @@ local function MakeRow(parent, plateIndex)
         end
     end)
 
-    -- IMPORTANT: do NOT SetScript("OnClick") on a secure action button; it breaks secure targeting.
-    -- Use PostClick so the secure target action runs, then we do selection/highlight.
-    row:HookScript("PostClick", function(self)
+        row:HookScript("PostClick", function(self)
         local bge = _G.RSTATS_BGE
         if bge then
             bge:SetSelectedRow(self)
@@ -1384,7 +1206,6 @@ local function MakeRow(parent, plateIndex)
     row.role = nil
     row.specID = nil
     row._preview = false
-    row._lastNameTry = 0
 
     -- Show the top-left anchor button when hovering any row.
     row:HookScript("OnEnter", function()
@@ -1515,7 +1336,7 @@ function BGE:ApplyMode()
             if want == "arena" and i <= self.arenaMax then
                 row:SetAttribute("unit", ArenaUnitFromIndex(i))
             else
-                row:SetAttribute("unit", nil)
+                                row:SetAttribute("unit", nil)
             end
         end
     end
@@ -1552,63 +1373,13 @@ local function FormatHealthText(cur, maxv, mode)
     return tostring(cur)
 end
 
-local function SetRoleTexture(tex, role)
-    if not tex then return false end
-    if not role or role == "" then
-        tex:Hide()
-        return false
-    end
 
-    if tex.SetAtlas and _G.GetMicroIconForRole then
-        local okAtlas, atlas = pcall(_G.GetMicroIconForRole, role)
-        if okAtlas and type(atlas) == "string" then
-            if _G.C_Texture and _G.C_Texture.GetAtlasInfo then
-                local okInfo, info = pcall(_G.C_Texture.GetAtlasInfo, atlas)
-                if okInfo and info then
-                    local okSet = pcall(tex.SetAtlas, tex, atlas, true)
-                    if okSet then
-                        tex:SetTexCoord(0, 1, 0, 1)
-                        tex:Show()
-                        return true
-                    end
-                end
-            else
-                local okSet = pcall(tex.SetAtlas, tex, atlas, true)
-                if okSet then
-                    tex:SetTexCoord(0, 1, 0, 1)
-                    tex:Show()
-                    return true
-                end
-            end
-        end
-    end
 
-    tex:Hide()
-    return false
-end
 
-local function ExtractSpecIDFromScoreTuple(t)
-    if type(t) ~= "table" then return nil end
-    for i = #t, 1, -1 do
-        local v = t[i]
-        if type(v) == "number" and v > 0 and v < 10000 then
-            -- Validate as a specID by seeing if WoW can name it.
-            if _G.GetSpecializationNameForSpecID then
-                local ok, specName = pcall(_G.GetSpecializationNameForSpecID, v)
-                if ok and type(specName) == "string" and specName ~= "" then
-                    return v
-                end
-            elseif _G.GetSpecializationInfoByID then
-                local ok, a, b = pcall(_G.GetSpecializationInfoByID, v)
-                -- If it didn't error, it's almost certainly a specID.
-                if ok then
-                    return v
-                end
-            end
-        end
-    end
-    return nil
-end
+
+
+
+
 
 
 
@@ -1627,88 +1398,26 @@ function BGE:IsMatchStarted()
 end
 
 function BGE:UpdateMatchState()
-    -- We want: solid rows during the prep phase, then once the match truly starts (gates open),
-    -- enable out-of-range dimming and keep it enabled until we leave the PvP instance.
-    local inPvp = IsInPVPInstance()
-    if not inPvp then
-        self._matchStarted = false
-        self._oorEnabled = false
-        self.achievCache = nil -- reset per BG
-        return
-    end
-
-    local wasStarted = self._matchStarted and true or false
+    local wasStarted = self._matchStarted
     self._matchStarted = self:IsMatchStarted()
+
     if self._matchStarted then
         self._oorEnabled = true
-        if not wasStarted then
-            if self.EngagedNameplateSweep then
-                self:EngagedNameplateSweep()
-            end
+        if not wasStarted and self.EngagedNameplateSweep then
+            self:EngagedNameplateSweep()
         end
-    end
-end
-
-
--- Short BG-entry warmup: scoreboard often starts at 0 until it gets a push.
-
-
-
-UpdateNameClipToHPFill = function(row)
-    if not row or not row.hp or not row.nameText then return end
-
-    -- Clamp name width to the *filled* portion of the HP bar (class colour).
-    -- IMPORTANT: In Midnight builds, geometry getters can return "secret" values.
-    -- Never do arithmetic on these directly.
-    local function SafeNumber(v)
-        if type(v) ~= "number" then return nil end
-        if issecretvalue and issecretvalue(v) then return nil end
-        return v
+    else
+        self._oorEnabled = false
     end
 
-    local tex = row.hp.GetStatusBarTexture and row.hp:GetStatusBarTexture() or nil
-
-    local hpLeft
-    if row.hp.GetLeft then
-        local ok, v = pcall(row.hp.GetLeft, row.hp)
-        if ok then hpLeft = SafeNumber(v) end
+    if not IsInPVPInstance() then
+        self._matchStarted = false
+        self._oorEnabled = false
     end
-
-    local fillRight
-    if tex and tex.GetRight then
-        local ok, v = pcall(tex.GetRight, tex)
-        if ok then fillRight = SafeNumber(v) end
-    end
-
-    if not hpLeft or not fillRight then
-        -- Fallback: clamp to full HP width if we can't read texture geometry.
-        local w = row.hp.GetWidth and row.hp:GetWidth() or 0
-        if type(w) == "number" and w > 0 then
-            row.nameText:SetWidth(math.max(0, w - 6))
-        end
-        return
-    end
-
-    local okW, fillW = pcall(function() return fillRight - hpLeft end)
-    if not okW or type(fillW) ~= "number" or (issecretvalue and issecretvalue(fillW)) then
-        local w = row.hp.GetWidth and row.hp:GetWidth() or 0
-        if type(w) == "number" and w > 0 then
-            row.nameText:SetWidth(math.max(0, w - 6))
-        end
-        return
-    end
-    if fillW < 0 then fillW = 0 end
-
-    -- left inset matches ApplyRowLayout (4) + a little safety
-    row.nameText:SetWidth(math.max(0, fillW - 6))
 end
 
 function BGE:EnsurePreviewRows()
-    if not self.frame then return end
-    if not self.rows or not self.rows[1] then return end
-
     if IsInPVPInstance() then
-        self._enteredBGAt = self._enteredBGAt or GetTime()
         self:ClearPreviewRows()
         return
     end
@@ -1723,7 +1432,6 @@ function BGE:EnsurePreviewRows()
     if want > 10 then want = 10 end
     if want > #PREVIEW_ROSTER then want = #PREVIEW_ROSTER end
 
-    -- Use the pre-created secure rows (1..maxPlates). Preview shows 1..want.
     for i = 1, want do
         local rec = PREVIEW_ROSTER[i]
         local row = self.rows[i]
@@ -1732,48 +1440,39 @@ function BGE:EnsurePreviewRows()
 
         row._preview = true
         row.unit = nil
+        row.unitID = nil
+        row._unitIDKind = nil
         row.name = rec.name
         row.fullName = nil
         row.achievIconTex = nil
         row.achievText = nil
         row.achievTint = nil
-
-        -- Preview: if name includes realm, store it as fullName and keep base name in row.name
-        if type(rec.name) == "string" then
-            local n, r = rec.name:match("^([^-]+)%-(.+)$")
-            if n and r then
-                row.fullName = rec.name
-                row.name = n
-            end
-        end
         row.classFile = rec.classFile
-        row.role = rec.role
+        row.role = nil
+        row.specID = nil
+        row.guid = nil
+        row._seenIdentity = true
+        row._outOfRange = false
 
         local r, g, b = GetClassRGB(rec.classFile)
         row.bg:SetColorTexture(0, 0, 0, 0.35)
         row.hp:SetStatusBarColor(r, g, b, 0.85)
 
-        -- Dummy values purely to show the bars
         row.hp:SetMinMaxValues(0, 100)
         local v = 82 - (i * 3 % 30)
         row.hp:SetValue(v)
         local mode = GetSetting("bgeHealthTextMode", 2)
         row.hpText:SetText(FormatHealthText(v, 100, mode))
         row.nameText:SetText(rec.name)
-        -- Preview text stays Rated Stats colour (not class colour).
         row.nameText:SetTextColor(RS_TEXT_R, RS_TEXT_G, RS_TEXT_B)
         row.hpText:SetTextColor(RS_TEXT_R, RS_TEXT_G, RS_TEXT_B)
-        -- Preview: show role icon from the preview roster (not scoreboard).
-        if rec.role and SetRoleTexture(row.roleIcon, rec.role) then
-            row.roleIcon:Show()
-        else
-            row.roleIcon:Hide()
-        end
+
+        if row.roleIcon then row.roleIcon:Hide() end
 
         if GetSetting("bgeShowPower", true) then
             row.power:SetMinMaxValues(0, 100)
             row.power:SetValue(65 - (i * 4 % 40))
-            row.power:SetStatusBarColor(0.0, 0.55, 1.0, 0.9) -- mana-blue for preview
+            row.power:SetStatusBarColor(0.0, 0.55, 1.0, 0.9)
             row.power:Show()
         else
             row.power:Hide()
@@ -1783,7 +1482,6 @@ function BGE:EnsurePreviewRows()
         row:SetAlpha(1)
     end
 
-    -- Hide all remaining rows while previewing (keep them reserved for PvP).
     for i = want + 1, self.maxPlates do
         local row = self.rows[i]
         if row then
@@ -2088,8 +1786,8 @@ function BGE:UpdateRowVisibilities()
         DPrint("ROW_VIS",
             "UpdateRowVisibilities visible=" .. tostring(visible) ..
             " identified=" .. tostring(identified) ..
-            " matchStarted=" .. Bool01(self._matchStarted) ..
-            " oor=" .. Bool01(self._oorEnabled)
+                        " matchStarted=" .. Bool01(self._matchStarted) ..
+            " oor=" .. Bool01(self._oorEnabled) ..
         )
     end
 end
@@ -2152,6 +1850,9 @@ function BGE:UpdateIdentity(row, unit)
     local guid = SafeUnitGUID(unit)
     local full, base = GetNameplateDisplayNames(unit)
     local name = base or full
+    if not name then
+        name = SafeUnitName(unit)
+    end
     local _, classFile = SafeUnitClass(unit)
 
     if oldGuid and self.rowByGuid and self.rowByGuid[oldGuid] == row and oldGuid ~= guid then
@@ -2182,10 +1883,29 @@ function BGE:UpdateIdentity(row, unit)
         row.hp:SetStatusBarColor(r, g, b, classAlpha)
         row._seenIdentity = true
     end
-end
 
--- Periodic retry: UnitName/UnitClass can be nil for a short time after ADDED/ARENA updates.
--- UNIT_NAME_UPDATE is not reliable for nameplate units, so we poll lightly while the unit exists.
+    UpdateNameClipToHPFill(row)
+
+    local hadAchTex = row.achievIconTex
+    if row.achievIconTex == nil then
+        row.achievIconTex, row.achievText, row.achievTint = GetIconTextureForEnemyName(row.fullName, row.name)
+    end
+    local iconTex = row.achievIconTex
+    if iconTex then
+        row.icon:SetTexture(iconTex)
+        row.icon:Show()
+    else
+        row.icon:Hide()
+    end
+
+    if (not hadAchTex) and iconTex then
+        if InLockdown() then
+            self._anchorsDirty = true
+        else
+            self:ApplyRowLayout(row)
+        end
+    end
+end
 
 function BGE:StartLiveBarPoller()
     if self._liveBarPoller then return end
@@ -2418,6 +2138,29 @@ function BGE:UpdatePower(row, unit)
     row.power:Show()
 end
 
+function BGE:GetRowForExternalUnit(unitID)
+    if not unitID or not UnitExists(unitID) then return nil end
+    if UnitIsFriend("player", unitID) then return nil end
+
+    for _, row in ipairs(self.rows or {}) do
+        if row and not row._preview and row.unit then
+            local okSame, same = pcall(UnitIsUnit, unitID, row.unit)
+            if okSame and same then
+                return row
+            end
+        end
+    end
+
+    local guid = SafeUnitGUID(unitID)
+    if guid and self.rowByGuid then
+        local okRow, hit = pcall(function() return self.rowByGuid[guid] end)
+        if okRow and hit then return hit end
+    end
+
+    return nil
+end
+
+
 function BGE:AcquireLiveRow(unit)
     if not unit or not UnitExists(unit) then return nil end
 
@@ -2442,28 +2185,6 @@ function BGE:AcquireLiveRow(unit)
         if r and not r._preview and not r.unit then
             return r
         end
-    end
-
-    return nil
-end
-
-function BGE:GetRowForExternalUnit(unitID)
-    if not unitID or not UnitExists(unitID) then return nil end
-    if UnitIsFriend("player", unitID) then return nil end
-
-    for _, row in ipairs(self.rows or {}) do
-        if row and not row._preview and row.unit then
-            local okSame, same = pcall(UnitIsUnit, unitID, row.unit)
-            if okSame and same then
-                return row
-            end
-        end
-    end
-
-    local guid = SafeUnitGUID(unitID)
-    if guid and self.rowByGuid then
-        local okRow, hit = pcall(function() return self.rowByGuid[guid] end)
-        if okRow and hit then return hit end
     end
 
     return nil
@@ -2769,26 +2490,24 @@ end
 function BGE:HandlePlateRemoved(unit)
     if self._mode == "arena" then return end
     if not IsNameplateUnit(unit) then return end
-
     local row = self.rowByUnit and self.rowByUnit[unit] or nil
     if not row then return end
 
+    -- Do NOT wipe. Keep last known identity/bars and just fade until it returns.
     row.unit = nil
-    if row.UnitIDs then
-        row.UnitIDs.Nameplate = nil
-    end
-    row.unitID = nil
-
-    if self.ResolveEnemyPrimaryUnitID then
-        self:ResolveEnemyPrimaryUnitID(row)
-    end
-
+	if row.UnitIDs then
+		row.UnitIDs.Nameplate = nil
+	end
+	row.unitID = nil
+	if self.ResolveEnemyPrimaryUnitID then
+		self:ResolveEnemyPrimaryUnitID(row)
+	end
     row._barsUnit = nil
     row._hpSB = nil
     row._pwrSB = nil
     self.rowByUnit[unit] = nil
-
     row._outOfRange = true
+    -- Don't force-hide power: it may still refresh via target/focus/ally-target unit tokens.
     ApplyClassAlpha(row, CLASS_ALPHA_OOR)
     row:SetAlpha(row._seenIdentity and ROW_ALPHA_OOR or 0)
 end
@@ -2804,280 +2523,31 @@ function BGE:HandleUnitUpdate(unit, what, force)
     if self._mode == "arena" then
         if not IsArenaUnit(unit) then return end
     else
-        if not IsNameplateUnit(unit) then return end
+        if not IsNameplateUnit(unit) and unit ~= "target" and unit ~= "focus" and unit ~= "mouseover" and unit ~= "softenemy" and not unit:find("target") then
+            return
+        end
     end
 
     local row = mappedRow or self:GetRowForUnit(unit)
+    if not row and self._mode ~= "arena" and not IsNameplateUnit(unit) then
+        row = self:GetRowForExternalUnit(unit)
+    end
     if not row then return end
 
     if (not row.name or not row.classFile) and not row._preview then
         self:UpdateIdentity(row, unit)
     end
 
-    if what == "NAME" or force then
-        self:UpdateIdentity(row, unit)
-    end
-    if what == "HP" or force then
-        self:UpdateHealth(row, unit)
-    end
-    if what == "PWR" or force then
-        self:UpdatePower(row, unit)
-    end
-
+    self:UpdateHealth(row, unit)
+    self:UpdatePower(row, unit)
     self:UpdateRowVisibilities()
 end
 
 function BGE:RefreshVisibility()
     if not self.frame then return end
 
-    if not GetSetting("bgeEnabled", true) then
-        -- Don't Hide() container in combat if it contains secure children.
-        self.frame:SetAlpha(0)
-        self:StopTargetScanner()
-        return
-    end
-
-    -- Resolve which per-size profile to use while OUTSIDE PvP.
-    -- Preview is only supported for one profile at a time.
-    if not IsInPVPInstance() then
-        local db = GetPlayerDB()
-        self._profilePrefix = ResolvePreviewProfilePrefix(db)
-    end
-
     local preview = GetSetting("bgePreview", false)
-    if IsInPVPInstance() or preview then
-        if not self.frame:IsShown() then
-            if InLockdown() then
-                self._showDirty = true
-            else
-                self.frame:Show()
-            end
-        end
-        self.frame:SetAlpha(1)
-
-        -- Keep pulling HP/PWR from target/focus/ally-target tokens while in BG,
-        -- and also poll already-bound nameplate bars so HP appears without clicking.
-        if IsInPVPInstance() and self._mode ~= "arena" then
-            self:StartTargetScanner()
-            self:StartLiveBarPoller()
-        else
-            self:StopTargetScanner()
-            self:StopLiveBarPoller()
-        end
-
-        -- Create only as many secure rows as we are configured to DISPLAY.
-        -- Relying on GetNumBattlefieldScores() early/late-join can be too low (e.g. 10 in a 15v15),
-        -- which prevents rows 11..15 from ever existing.
-        local want = 10
-        local isRatedBG = false
-        local isRatedSoloRBG = false
-        local isSoloRBG = false
-
-        if (not preview) and IsInPVPInstance() and self._mode ~= "arena" then
-            -- Distinguish Rated BG (10v10) vs Solo RBG / Blitz (8v8)
-            if C_PvP and C_PvP.IsRatedSoloRBG then
-                local okS, s = pcall(C_PvP.IsRatedSoloRBG)
-                if okS and s then isRatedSoloRBG = true end
-            end
-            if C_PvP and C_PvP.IsSoloRBG then
-                local okSR, sr = pcall(C_PvP.IsSoloRBG)
-                if okSR and sr then isSoloRBG = true end
-            end
-            if isRatedSoloRBG then
-                isSoloRBG = true
-            end
-
-            if (not isRatedSoloRBG) and C_PvP and C_PvP.IsRatedBattleground then
-                local okR, r = pcall(C_PvP.IsRatedBattleground)
-                if okR and r then isRatedBG = true end
-            elseif (not isRatedSoloRBG) and _G.IsRatedBattleground then
-                local okR, r = pcall(_G.IsRatedBattleground)
-                if okR and r then isRatedBG = true end
-            end
-        end
-
-        -- Latch once per match so later refreshes cannot downgrade rated/blitz to normal BG.
-        if not self._latchedBGWant then
-            if isSoloRBG then
-                self._latchedBGWant = 8
-                self._latchedBGKind = "blitz"
-            elseif isRatedBG then
-                self._latchedBGWant = 10
-                self._latchedBGKind = "rated"
-            else
-                local _, instanceType, _, _, maxPlayers = GetInstanceInfo()
-                if instanceType == "pvp" then
-                    if maxPlayers == 10 then
-                        self._latchedBGWant = 10
-                        self._latchedBGKind = "normal10"
-                    elseif maxPlayers == 15 then
-                        self._latchedBGWant = 15
-                        self._latchedBGKind = "normal15"
-                    elseif type(maxPlayers) == "number" and maxPlayers > 15 then
-                        self._latchedBGWant = maxPlayers
-                        self._latchedBGKind = "epic"
-                    end
-                end
-            end
-        else
-            want = self._latchedBGWant
-        end
-
-        if preview then
-            want = GetSetting("bgePreviewCount", 8)
-        elseif self._mode == "arena" then
-            want = self.arenaMax or 5
-        else
-            -- want rules (locale-safe via mapID):
-            -- rated: 10 (RBG), blitz/solo rbg: 8
-            -- not rated:
-            --   if bg maxPlayers > 15: 40
-            --   if bg maxPlayers == 15: 15   (AB/EotS/DWG are 15s; this also survives locale)
-            --   else: 10
-            --   else: 15 (create enough rows for 15v15; unused rows stay hidden in 10v10)
-
-            if isSoloRBG then
-                want = 8
-            elseif isRatedBG then
-                want = 10
-            else
-                local maxPlayers = nil
-
-                -- Primary source of truth: current instance maxPlayers (no mapID/index guessing).
-                -- GetInstanceInfo() returns: 1 name, 2 instanceType, 3 difficultyID, 4 difficultyName, 5 maxPlayers, 6 dynamicDifficulty,
-                -- 7 isDynamic, 8 instanceMapID, ...
-                local okGI, instName, instType, _, _, instMaxPlayers, _, instMapID = pcall(_G.GetInstanceInfo)
-                if okGI and instType == "pvp" and type(instMaxPlayers) == "number" and instMaxPlayers > 0 then
-                    maxPlayers = instMaxPlayers
-
-                    -- 15v15 map-type override:
-                    -- Some 15v15 BGs can report 10 briefly/incorrectly on zone-in; force 15 for these maps.
-                    -- AB=461, EotS=482, DWG=935 (InstanceMapID from GetInstanceInfo()).
-                    if maxPlayers == 10 and (instName == "Arathi Basin" or instName == "Eye of the Storm" or instName == "Deepwind Gorge") then
-                        maxPlayers = 15
-                    end
-
-                    -- Epic BG exceptions: these are 35-per-faction (not 40).
-                    -- Ashran / Isle of Conquest / Battle for Wintergrasp were set to 35 in Blizzard patch notes.
-                    -- (GetInstanceInfo can still report 40, so clamp it here.)
-                    if maxPlayers == 40 then
-                        if instName == "Ashran" then
-                            maxPlayers = 35
-                        end
-                    end
-
-                    -- Success: clear any pending retry state.
-                    self._mpRetryCount = nil
-                    self._mpRetryPending = nil
-                elseif okGI and instType == "pvp" and (not preview) and self._mode ~= "arena" then
-                    -- Zone-in timing: maxPlayers can be unavailable briefly. Retry 1s up to 3 times.
-                    self._mpRetryCount = (self._mpRetryCount or 0)
-                    if (self._mpRetryCount < 10) and (not self._mpRetryPending) and _G.C_Timer and _G.C_Timer.After then
-                        self._mpRetryPending = true
-                        self._mpRetryCount = self._mpRetryCount + 1
-                        _G.C_Timer.After(1, function()
-                            if not self then return end
-                            self._mpRetryPending = nil
-                            -- Only retry while still in a PvP instance.
-                            if IsInPVPInstance() then
-                                self:RefreshVisibility()
-                            else
-                                self._mpRetryCount = nil
-                            end
-                        end)
-                    end
-                    -- Don't lock in fallback sizing while retries are in flight.
-                    if not maxPlayers and self._mpRetryPending then
-                        return
-                    end
-                end
-
-                -- Fallback: BattlegroundInfo list (can fail if uiMapID is a child map).
-                local mapID = nil
-                if not maxPlayers and C_Map and C_Map.GetBestMapForUnit then
-                    local okM, mid = pcall(C_Map.GetBestMapForUnit, "player")
-                    if okM then mapID = mid end
-                end
-
-                -- BattlegroundInfo includes maxPlayers and optional mapID; match by mapID.
-                if not maxPlayers and mapID and C_PvP and C_PvP.GetNumBattlegroundTypes and C_PvP.GetBattlegroundInfo then
-                    local okN, tN = pcall(C_PvP.GetNumBattlegroundTypes)
-                    if okN and type(tN) == "number" then
-                        for idx = 1, tN do
-                            local okI, bi = pcall(C_PvP.GetBattlegroundInfo, idx)
-                            if okI and bi and bi.mapID == mapID and type(bi.maxPlayers) == "number" then
-                                maxPlayers = bi.maxPlayers
-                                break
-                            end
-                        end
-                    end
-                end
-
-                -- Prefer resolved maxPlayers (handles 10v10 variants on "15v15 maps").
-                if maxPlayers and maxPlayers > 15 then
-                    if maxPlayers == 35 then
-                        want = 35
-                    else
-                        want = 40
-                    end
-                elseif maxPlayers and maxPlayers == 15 then
-                    want = 15
-                elseif maxPlayers and maxPlayers == 10 then
-                    want = 10
-                else
-                    -- If we can't confidently resolve maxPlayers yet (mapID timing / API quirks),
-                    -- default to 10 for normal BGs.
-                    want = 10
-                end
-            end -- rated
-
-            if self._latchedBGWant and (not preview) and self._mode ~= "arena" then
-                want = self._latchedBGWant
-            end
-        end -- preview/arena/bg
-        -- Select the per-size layout profile for this match.
-        -- This drives the columns/rows/width/height/gaps used by ApplyAnchors/ApplyRowLayout.
-        -- Only pick a live-match profile inside PvP; preview uses ResolvePreviewProfilePrefix() at the top.
-        if (not preview) and IsInPVPInstance() and self._mode ~= "arena" then
-            if isSoloRBG and want == 8 then
-                self._profilePrefix = "bgeRated"
-            elseif isRatedBG then
-                self._profilePrefix = "bge10"
-            elseif want and want > 15 then
-                self._profilePrefix = "bgeLarge"
-            elseif want == 15 then
-                self._profilePrefix = "bge15"
-            else
-                self._profilePrefix = "bge10"
-            end
-        end
-        if want > (self.maxPlates or 40) then want = (self.maxPlates or 40) end
-        self:EnsureSecureRows(want)
-
-        -- Use want as the expected enemy team size target for seeding retries.
-        if not preview and self._mode ~= "arena" and IsInPVPInstance() then
-            self._expectedBGTeamSize = nil
-            self._expectedBGTeamSizeGuess = want
-            self._enteredBGAt = self._enteredBGAt or GetTime()
-        end
-
-        self:UpdateFrameTeamTint()
-        self:EnsurePreviewRows()
-
-        -- If we /reload while already in a BG, existing plates may not re-fire ADDED.
-        -- Do a quick scan to seed rows (same idea as the original ENP script).
-        if IsInPVPInstance() and self._mode ~= "arena" then
-            for i = 1, self.maxPlates do
-                local u = "nameplate" .. i
-                if UnitExists(u) then
-                    self:HandlePlateAdded(u)
-                end
-            end
-        end
-
-        self:UpdateRowVisibilities()
-    else
-        -- Leaving PvP: hard clear
+    if not IsInPVPInstance() and not preview then
         self:StopTargetScanner()
         self:StopLiveBarPoller()
         self:ClearPreviewRows()
@@ -3086,14 +2556,118 @@ function BGE:RefreshVisibility()
         end
         wipe(self.rowByGuid)
         wipe(self.rowByUnit)
-        self._expectedBGTeamSize = nil
-        self._expectedBGTeamSizeGuess = nil
-        self._enteredBGAt = nil
+        self._matchStarted = false
+        self._oorEnabled = false
         self.frame:SetAlpha(0)
         if not InLockdown() then
             self.frame:Hide()
         end
+        return
     end
+
+    if not IsInPVPInstance() then
+        local db = GetPlayerDB()
+        self._profilePrefix = ResolvePreviewProfilePrefix(db)
+    end
+
+    if not self.frame:IsShown() then
+        if InLockdown() then
+            self._showDirty = true
+        else
+            self.frame:Show()
+        end
+    end
+    self.frame:SetAlpha(1)
+
+    if IsInPVPInstance() and self._mode ~= "arena" then
+        self:StartTargetScanner()
+        self:StartLiveBarPoller()
+    else
+        self:StopTargetScanner()
+        self:StopLiveBarPoller()
+    end
+
+    local want = 10
+    local isRatedBG = false
+    local isRatedSoloRBG = false
+    local isSoloRBG = false
+
+    if (not preview) and IsInPVPInstance() and self._mode ~= "arena" then
+        if C_PvP and C_PvP.IsRatedSoloRBG then
+            local okS, s = pcall(C_PvP.IsRatedSoloRBG)
+            if okS and s then isRatedSoloRBG = true end
+        end
+        if C_PvP and C_PvP.IsSoloRBG then
+            local okSR, sr = pcall(C_PvP.IsSoloRBG)
+            if okSR and sr then isSoloRBG = true end
+        end
+        if isRatedSoloRBG then isSoloRBG = true end
+
+        if (not isRatedSoloRBG) and C_PvP and C_PvP.IsRatedBattleground then
+            local okR, r = pcall(C_PvP.IsRatedBattleground)
+            if okR and r then isRatedBG = true end
+        elseif (not isRatedSoloRBG) and _G.IsRatedBattleground then
+            local okR, r = pcall(_G.IsRatedBattleground)
+            if okR and r then isRatedBG = true end
+        end
+    end
+
+    if preview then
+        want = GetSetting("bgePreviewCount", 8)
+    elseif self._mode == "arena" then
+        want = self.arenaMax or 5
+    else
+        if isSoloRBG then
+            want = 8
+        elseif isRatedBG then
+            want = 10
+        else
+            local _, instType, _, _, maxPlayers, _, _, instMapID = GetInstanceInfo()
+            if instType == "pvp" then
+                if type(maxPlayers) == "number" and maxPlayers > 15 then
+                    want = math.min(maxPlayers, self.maxPlates or 40)
+                elseif maxPlayers == 15 then
+                    want = 15
+                else
+                    want = 10
+                end
+                if maxPlayers == 10 and (instMapID == 461 or instMapID == 482 or instMapID == 935) then
+                    want = 15
+                end
+            end
+        end
+    end
+
+    if (not preview) and IsInPVPInstance() and self._mode ~= "arena" then
+        if isSoloRBG and want == 8 then
+            self._profilePrefix = "bgeRated"
+        elseif isRatedBG then
+            self._profilePrefix = "bge10"
+        elseif want and want > 15 then
+            self._profilePrefix = "bgeLarge"
+        elseif want == 15 then
+            self._profilePrefix = "bge15"
+        else
+            self._profilePrefix = "bge10"
+        end
+    end
+
+    if want > (self.maxPlates or 40) then want = (self.maxPlates or 40) end
+    self:EnsureSecureRows(want)
+
+    self:UpdateFrameTeamTint()
+    self:EnsurePreviewRows()
+
+    if IsInPVPInstance() and self._mode ~= "arena" then
+        for i = 1, self.maxPlates do
+            local u = "nameplate" .. i
+            if UnitExists(u) then
+                self:HandlePlateAdded(u)
+            end
+        end
+    end
+
+    self:UpdateRowVisibilities()
 end
 
 function BGE:HandleArenaUnit(unit)
@@ -3123,25 +2697,12 @@ end
 
 function BGE:ApplySettings()
     if not self.frame then
-        -- Outside PvP, Settings can enable preview after login. Bootstrap the frame here.
         if (IsInPVPInstance() or GetSetting("bgePreview", false)) and CreateMainFrame then
             CreateMainFrame()
         end
         return
     end
 
-    -- If preview gets enabled AFTER login (outside PvP), the frame won't exist yet.
-    -- Bootstrap it here so Settings -> Preview immediately shows the frame.
-    if not self.frame then
-        local preview = GetSetting("bgePreview", false)
-        if (IsInPVPInstance() or preview) and CreateMainFrame then
-            CreateMainFrame()
-        end
-        return
-    end
-
-    -- Achievements icon visibility: when toggled (or when the Achievements API becomes available),
-    -- clear cached icon data so rows re-evaluate and redraw immediately.
     local showAch = GetSetting("bgeShowAchievIcon", false)
     local apiPresent = (type(_G.RSTATS_Achiev_GetHighestPvpRank) == "function")
     if self._lastShowAchievIcon == nil then self._lastShowAchievIcon = showAch end
@@ -3161,7 +2722,6 @@ function BGE:ApplySettings()
     end
 
     local locked = GetSetting("bgeLocked", true)
-
     self.frame:SetMovable(not locked)
     self.frame:EnableMouse(not locked)
     self.frame:SetClampedToScreen(true)
@@ -3180,7 +2740,6 @@ function BGE:ApplySettings()
         SetSetting("bgeY", y)
     end)
 
-    -- Allow dragging by the chat-style anchor tab as well (rows/buttons can steal mouse input).
     if self.frame.anchorTab then
         self.frame.anchorTab:RegisterForDrag("LeftButton")
         self.frame.anchorTab:SetScript("OnDragStart", function()
@@ -3286,11 +2845,6 @@ CreateMainFrame = function()
     -- Also keep the container hidden out of PvP to avoid a "ghost frame" on login.
     f:SetAlpha(0)
     f:Hide()
-
-    -- Light polling loop: fixes "Enemy forever"/blank forever by retrying until UnitName becomes available.
-    f._bgeRetryAccum = 0
-    f._bgeBarsAccum = 0
-    f:SetScript("OnUpdate", nil)
 
     -- IMPORTANT: Do NOT create an always-on target scan ticker here.
     -- We already start/stop scanning via StartTargetScanner() in RefreshVisibility().
@@ -3439,13 +2993,7 @@ evt:SetScript("OnEvent", function(_, event, arg1)
     end
 
     if event == "NAME_PLATE_UNIT_ADDED" then
-        -- Event can fire before the plate is fully usable; do a 0-delay retry as well.
-        if C_Timer and C_Timer.After then
-            local unit = arg1
-            C_Timer.After(0, function()
-                BGE:HandlePlateAdded(unit)
-            end)
-        end
+        BGE:HandlePlateAdded(arg1)
         return
     end
 
