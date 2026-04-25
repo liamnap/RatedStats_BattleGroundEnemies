@@ -31,9 +31,34 @@ BGE.rows = {}
 BGE.previewRows = {}
 BGE.maxPlates = 40
 
+-- Scoreboard seed state (BG start)
+BGE._seededThisBG = false
 BGE._oorEnabled = false -- latch: enable out-of-range dimming only after gates open
+BGE._teamDidNotFullyEnter = false
+BGE._teamDidNotFullyEnterWarned = false
+BGE._enteredMidMatch = false
+BGE._latchedBGWant = nil
+BGE._latchedBGKind = nil
+BGE.scoreClassList = {}
+-- Roster seeding list of { guid, name, classToken, specID, role }
+BGE.roster = {}
 BGE.rowByGuid = {}
 BGE.rowByUnit = {}
+BGE.rowByName = {}
+BGE.nameCounts = {}
+BGE.rowByFullName = {}
+BGE.rowByBaseName = {}
+BGE.fullNameCounts = {}
+BGE.baseNameCounts = {}
+BGE.rowByPID = {}
+BGE.pidCounts = {}
+BGE.ClassTokenToID = nil
+BGE.RaceNameToID = nil
+-- Last seeded roster size.
+BGE._seedCount = 0
+BGE._guidRetryAt = {}
+BGE._plateAddRetry = {}
+BGE._plateAddRetryKey = {}
 
 -- Rated Stats theme colour (b69e86) for on-row text/icons (not class colour).
 local RS_TEXT_R, RS_TEXT_G, RS_TEXT_B = 182/255, 158/255, 134/255
@@ -50,6 +75,10 @@ end
 
 -- If we had to skip anchoring due to lockdown, run it later.
 BGE._anchorsDirty = false
+
+-- Scoreboard cache: baseName -> { count = n, role = "TANK"/"HEALER"/"DAMAGER" }
+BGE.scoreCache = {}
+BGE.scoreCacheAt = 0
 
 -- Combat-safe: if we want to resize after combat, stash desired size.
 BGE._pendingW = nil
@@ -98,6 +127,10 @@ local function DPrintMissing(key, msg)
     if (now - last) < 3.0 then return end
     BGE._dbgLast[key] = now
     print("|cffb69e86[RSTATS-BGE]|r " .. msg)
+end
+
+local function PrintTeamRosterDidNotFill()
+    print("|cffb69e86Rated Stats:|r |cffffffffEnemy frames cannot be shown. Your team roster did not fully load, or you reloaded / entered mid-match. This is a WoW limitation not the AddOn. Hiding frame now.|r")
 end
 
 local function Bool01(v) return v and "1" or "0" end
@@ -190,9 +223,101 @@ local function DebugUnitSnapshot(tag, unit)
 end
 
 -- Debug helper: print what keys we actually seeded into rowByGuid.
+function BGE:DebugSeededGuidKeys(max)
+    if not GetSetting("bgeDebug", false) then return end
+    local n = 0
+    for k, _ in pairs(self.rowByGuid or {}) do
+        n = n + 1
+        if n <= 15 then
+            local ks = SafeToString(k) or "<secret>"
+            DPrint("SEEDKEY" .. tostring(n), "SEED guidKey[" .. tostring(n) .. "]=" .. ks)
+        end
+    end
+    DPrint("SEEDCOUNT", "SEED rowByGuid.count=" .. tostring(n) .. " seedCount=" .. tostring(max or 0))
+end
 
 -- Debug: compare nameplate identity vs scoreboard identity for the same GUID.
 -- This is designed to NOT crash even if GUID/name are secret values.
+function BGE:DebugScoreVsNameplate(tag, unit, guidKey)
+    if not GetSetting("bgeDebug", false) then return end
+
+    -- nameplate side
+    local okNG, npGuidRaw = pcall(UnitGUID, unit)
+    local npGuidS = SafeToString(npGuidRaw)
+    if okNG and npGuidRaw and not npGuidS then npGuidS = "<secret>" end
+
+    local okNN, npNameRaw = pcall(UnitName, unit)
+    local npNameS = SafeToString(npNameRaw)
+    if okNN and npNameRaw and not npNameS then npNameS = "<secret>" end
+
+    -- Never do comparisons like (x ~= nil) if x might be secret.
+    -- Just stringify; if we can't stringify, treat it as secret-ish.
+    local keyS = SafeToString(guidKey)
+    local keyIsSecret = false
+    if guidKey and not keyS then
+        keyS = "<secret>"
+        keyIsSecret = true
+    end
+
+    local sbGuidS, sbNameS = nil, nil
+    local hitDirect = false
+    local keyType = type(guidKey)
+    local keySType = type(keyS)
+
+    -- seeded side (direct lookup)
+    if guidKey and self.rowByGuid then
+        local okRow, row = pcall(function() return self.rowByGuid[guidKey] end)
+        if okRow and row then
+            hitDirect = true
+            sbGuidS = SafeToString(row.guid)
+            if row.guid and not sbGuidS then sbGuidS = "<secret>" end
+            sbNameS = SafeToString(row.name)
+            if row.name and not sbNameS then sbNameS = "<secret>" end
+        end
+    end
+
+    -- nameplate display name (frame text), avoids UnitName restrictions
+    local npDispS = nil
+    do
+        local okP, plate = pcall(function()
+            if _G.C_NamePlate and _G.C_NamePlate.GetNamePlateForUnit then
+                return _G.C_NamePlate.GetNamePlateForUnit(unit)
+            end
+            return nil
+        end)
+        if okP and plate and plate.UnitFrame and plate.UnitFrame.name and plate.UnitFrame.name.GetText then
+            local okT, t = pcall(plate.UnitFrame.name.GetText, plate.UnitFrame.name)
+            npDispS = SafeToString(t) or (t and "<secret>" or nil)
+        end
+    end
+
+    local hitByName = false
+    local sbName2S = nil
+    if npDispS and self.rowByName then
+        local okRow2, row2 = pcall(function() return self.rowByName[npDispS] end)
+        if okRow2 and row2 then
+            hitByName = true
+            sbName2S = SafeToString(row2.name) or (row2.name and "<secret>" or nil)
+        end
+    end
+
+    DPrint("CMP:" .. tag .. ":" .. unit,
+        "CMP " .. tag ..
+        " unit=" .. unit ..
+        " nameplate.guid=" .. (npGuidS or "nil") ..
+        " nameplate.name=" .. (npNameS or "nil") ..
+        " scoreboard.guid=" .. (sbGuidS or "nil") ..
+        " scoreboard.name=" .. (sbNameS or "nil") ..
+        " nameplate.disp=" .. (npDispS or "nil") ..
+        " scoreboard.nameByDisp=" .. (sbName2S or "nil") ..
+        " guidKey=" .. (keyS or "nil") ..
+        " keyType=" .. tostring(keyType) ..
+        " keySType=" .. tostring(keySType) ..
+        " hitDirect=" .. Bool01(hitDirect) ..
+        " hitByDisp=" .. Bool01(hitByName) ..
+        " keySecret=" .. Bool01(keyIsSecret)
+    )
+end
 
 local function IsNameplateUnit(unit)
     return type(unit) == "string" and unit:match("^nameplate%d+$") ~= nil
@@ -326,6 +451,25 @@ local function CalculatePIDFull(raceID, classID, level, factionIndex, sex, honor
         + honorLevel
 end
 
+function BGE:EnsurePIDMaps()
+    if self.ClassTokenToID and self.RaceNameToID then return end
+    self.ClassTokenToID = {}
+    for i = 1, (GetNumClasses and GetNumClasses() or 0) do
+        local _, token, id = GetClassInfo(i)
+        if token and id then
+            self.ClassTokenToID[token] = id
+        end
+    end
+    self.RaceNameToID = {}
+    if _G.C_CreatureInfo and _G.C_CreatureInfo.GetRaceInfo then
+        for i = 1, 200 do
+            local info = _G.C_CreatureInfo.GetRaceInfo(i)
+            if info and info.raceName and info.raceID then
+                self.RaceNameToID[info.raceName] = info.raceID
+            end
+        end
+    end
+end
 
 UnitPID = function(unit)
     if not UnitExists(unit) then return 0 end
@@ -425,13 +569,28 @@ UnitStillMatchesRow = function(self, row, unit)
         end
     end
 
-    -- Fallback to current displayed name on the plate.
+    -- Fallback to nameplate display name.
     local disp, dispBase = GetNameplateDisplayNames(unit)
     if row and row.fullName and disp and disp == row.fullName then
         return true
     end
-    if row and row.name and dispBase and dispBase == row.name then
+    if row and row.name and dispBase and self.baseNameCounts and self.baseNameCounts[dispBase] == 1 and dispBase == row.name then
         return true
+    end
+
+    -- Weak opener fallback:
+    -- The row may have a valid scoreboard GUID, but the enemy nameplate often does NOT expose
+    -- a usable GUID or display name at BG start on 12.x. That means GUID is not a reliable
+    -- row<->nameplate link during opener validation.
+    -- If HandlePlateAdded() bound this plate by seed-compatible PID fallback, the resolver must
+    -- accept the same PID identity here or it will immediately discard a legitimate opener bind.
+    if row then
+        local pid = UnitPIDSeedCompat and UnitPIDSeedCompat(unit) or 0
+        if pid and pid > 0 and row.pid and pid == row.pid then
+            if self.rowByPID and self.rowByPID[pid] == row then
+                return true
+            end
+        end
     end
 
     return false
@@ -805,6 +964,310 @@ end
 
 -- Prefer C_PvP.GetScoreInfo(i) (has GUID + classToken + spec/role on modern clients).
 -- Fall back to legacy GetBattlefieldScore tuple parsing if needed (less reliable).
+function BGE:BuildRosterFromScoreboard()
+    wipe(self.roster)
+    wipe(self.nameCounts)
+    self:EnsurePIDMaps()
+    wipe(self.fullNameCounts)
+    wipe(self.baseNameCounts)
+    local seenGuid = {}
+    local seenFull = {}
+
+    -- Stable roster ordering across frequent scoreboard refreshes.
+    -- Scoreboard index order is NOT stable mid-match; without this, rows will reshuffle.
+    self._rosterOrderSeq = self._rosterOrderSeq or 0
+    self._rosterOrderByKey = self._rosterOrderByKey or {}
+
+    local function NormalizeRole(role)
+        local s = SafeToString(role)
+        if type(s) == "string" then
+            local up = s:upper()
+            if up == "HEALER" or up == "DAMAGER" or up == "TANK" then
+                return up
+            end
+            
+            -- roleAssigned behaves like a flag in many places:
+            -- 1=TANK, 2=DAMAGER, 4=HEALER (and sometimes combinations).
+            local n = tonumber(s)
+            local band = (_G.bit and _G.bit.band) or (_G.bit32 and _G.bit32.band)
+            if band and type(n) == "number" then
+                if band(n, 4) ~= 0 then return "HEALER" end
+                if band(n, 1) ~= 0 then return "TANK" end
+                if band(n, 2) ~= 0 then return "DAMAGER" end
+            elseif type(n) == "number" then
+                if n == 4 then return "HEALER" end
+                if n == 1 then return "TANK" end
+                if n == 2 then return "DAMAGER" end
+            end
+        end
+        return nil
+    end
+
+    -- NPC / Training Grounds: roleAssigned can be useless (e.g. always 2).
+    -- We have spec name strings in info.talentSpec / GetBattlefieldScore specNameL.
+    -- Resolve the role by matching spec name for the class, using Blizzard APIs.
+    local function ResolveRoleFromSpecName(classID, specName)
+        if type(classID) ~= "number" or classID <= 0 then return nil end
+        if type(specName) ~= "string" or specName == "" then return nil end
+        if not _G.C_SpecializationInfo or not _G.C_SpecializationInfo.GetNumSpecializationsForClassID then return nil end
+        if not _G.GetSpecializationInfoForClassID then return nil end
+
+        local okN, count = pcall(_G.C_SpecializationInfo.GetNumSpecializationsForClassID, classID)
+        if not okN or type(count) ~= "number" or count <= 0 then return nil end
+
+        for idx = 1, count do
+            local okI, _, name, _, _, role = pcall(_G.GetSpecializationInfoForClassID, classID, idx)
+            if okI and name == specName and type(role) == "string" and role ~= "" then
+                return NormalizeRole(role)
+            end
+        end
+        return nil
+    end
+
+    local function RoleRank(role)
+        if role == "TANK" then return 1 end
+        if role == "HEALER" then return 2 end
+        if role == "DAMAGER" then return 3 end
+        return 4
+    end
+
+    local n = 0
+    if _G.C_PvP and _G.C_PvP.GetScoreInfo then
+        -- Use match faction when available (mercenary-safe).
+        local myFactionIndex = nil
+        if _G.C_PvP.GetActiveMatchFaction then
+            local okF, f = pcall(_G.C_PvP.GetActiveMatchFaction)
+            if okF and type(f) == "number" then
+                myFactionIndex = NormalizeFactionIndex(f)
+            end
+        end
+        if myFactionIndex == nil then
+            -- Fallback: use "true" match faction for the player (mercenary-safe).
+            -- UnitFactionGroup("player") reports your character's faction, not necessarily your BG team.
+            myFactionIndex = GetUnitTrueFactionIndex("player")
+        end
+        local okN, nn = pcall(GetNumBattlefieldScores)
+        n = (okN and nn) or 0
+
+        -- If Blizzard APIs can't reliably tell our *match* faction (merc / cross-faction),
+        -- derive it from the scoreboard row for the local player.
+        if n > 0 then
+            local pName = UnitName("player")
+            local pRealm = GetRealmName and GetRealmName() or nil
+            local pFull = (pName and pRealm and (pName .. "-" .. pRealm)) or pName
+            if pName then
+                for ii = 1, n do
+                    local okP, infoP = pcall(_G.C_PvP.GetScoreInfo, ii)
+                    if (not okP or type(infoP) ~= "table") and _G.GetBattlefieldScore then
+                        local nameL, _, _, _, _, factionL = _G.GetBattlefieldScore(ii)
+                        local nameLS = SafeNonEmptyString(nameL)
+                        local factionLI = NormalizeFactionIndex(factionL)
+                        if nameLS or factionLI ~= nil then
+                            infoP = infoP or {}
+                            infoP.name = infoP.name or nameLS
+                            if infoP.faction == nil and factionLI ~= nil then
+                                infoP.faction = factionLI
+                            end
+                            okP = true
+                        end
+                    end
+                    if okP and type(infoP) == "table" then
+                        local nFull = SafeNonEmptyString(infoP.name)
+                        if nFull == pFull or nFull == pName then
+                            if type(infoP.faction) == "number" then
+                                myFactionIndex = NormalizeFactionIndex(infoP.faction)
+                            end
+                            break
+                        end
+                    end
+                end
+            end
+        end
+
+        for i = 1, n do
+            local ok, info = pcall(_G.C_PvP.GetScoreInfo, i)
+            -- BG start: GetScoreInfo can be nil/error for some indices. Don't drop the slot; use GetBattlefieldScore.
+            if (not ok or type(info) ~= "table") and _G.GetBattlefieldScore then
+                local nameL, _, _, _, _, factionL, rankL, raceL, _, classTokenL, _, _, _, _, _, specNameL = _G.GetBattlefieldScore(i)
+                local nameLS = SafeNonEmptyString(nameL)
+                local classTokenLS = SafeNonEmptyString(classTokenL)
+                local raceLS = SafeNonEmptyString(raceL)
+                local specNameLS = SafeNonEmptyString(specNameL)
+                local honorLevelL = tonumber(SafeToString(rankL))
+                local factionLI = NormalizeFactionIndex(factionL)
+                if nameLS or classTokenLS or raceLS or specNameLS or honorLevelL or factionLI ~= nil then
+                    info = info or {}
+                    info.name       = info.name       or nameLS
+                    info.classToken = info.classToken or classTokenLS
+                    info.raceName   = info.raceName   or raceLS
+                    info.talentSpec = info.talentSpec or specNameLS
+                    info.honorLevel = info.honorLevel or honorLevelL
+                    if info.faction == nil and factionLI ~= nil then
+                        info.faction = factionLI
+                    end
+                    ok = true
+                end
+            end
+            if ok and type(info) == "table" then
+                local isFriendly = false
+                local myFI = NormalizeFactionIndex(myFactionIndex)
+                local fi   = NormalizeFactionIndex(info.faction)
+
+                -- If C_PvP.GetScoreInfo faction is secret/unreadable, use GetBattlefieldScore faction instead.
+                if (not fi) and _G.GetBattlefieldScore then
+                    local _, _, _, _, _, factionL = _G.GetBattlefieldScore(i)
+                    local factionLI = NormalizeFactionIndex(factionL)
+                    if factionLI ~= nil then fi = factionLI end
+                end
+
+                if myFI and fi and fi == myFI then
+                    isFriendly = true
+                end
+
+                if not isFriendly then
+                    local guid = SafeToString(info.guid)
+                    local full = SafeNonEmptyString(info.name)
+                    local classToken = SafeNonEmptyString(info.classToken)
+                    -- talentSpec is often a string; keep it for display if you want.
+                    local specID = SafeNonEmptyString(info.talentSpec)
+                    local roleAssignedRaw = info.roleAssigned
+                    local role = NormalizeRole(roleAssignedRaw)
+                    local raceName = SafeNonEmptyString(info.raceName)
+                    local honorLevel = tonumber(SafeToString(info.honorLevel)) or 0
+                    -- PVPScoreInfo does not include level/sex (12.x); don't pretend it does.
+                    local level = 0
+                    local sex = 0
+                    local factionIndex = fi or (NormalizeFactionIndex(info.faction)) or 0
+
+                    -- If C_PvP.GetScoreInfo omitted/blocked fields, fall back to GetBattlefieldScore 
+                    if (not full or not classToken) and _G.GetBattlefieldScore then
+                        local nameL, _, _, _, _, factionL, rankL, raceL, _, classTokenL, _, _, _, _, _, specNameL = _G.GetBattlefieldScore(i)
+                        if not full then full = SafeNonEmptyString(nameL) end
+                        if not classToken then classToken = SafeNonEmptyString(classTokenL) end
+                        if not raceName then raceName = SafeNonEmptyString(raceL) end
+                        if not specID then specID = SafeNonEmptyString(specNameL) end
+                        if honorLevel == 0 and rankL then honorLevel = tonumber(SafeToString(rankL)) or honorLevel end
+                        local factionLI = NormalizeFactionIndex(factionL)
+                        if factionLI ~= nil then factionIndex = factionLI end
+                    end
+
+                    local classID = (classToken and self.ClassTokenToID and self.ClassTokenToID[classToken]) or 0
+                    local raceID = (raceName and self.RaceNameToID and self.RaceNameToID[raceName]) or 0
+                    -- Prefer spec-name derived role when available (Training Grounds NPCs often lie with roleAssigned).
+                    local specRole = ResolveRoleFromSpecName(classID, specID)
+                    if specRole then
+                        role = specRole
+                    elseif not role then
+                        -- Keep existing numeric specID fallback if specID is actually a specID number.
+                        local sid = tonumber(specID)
+                        if sid and _G.GetSpecializationRoleByID then
+                            local okR, r = pcall(_G.GetSpecializationRoleByID, sid)
+                            if okR and type(r) == "string" and r ~= "" then
+                                role = NormalizeRole(r)
+                            end
+                        end
+                    end
+
+                    if full then
+                        -- Deduplicate: prefer GUID when we have it, otherwise dedupe by full name.
+                        if (guid and seenGuid[guid]) or seenFull[full] then
+                            -- skip duplicate row
+                        else
+                            if guid then seenGuid[guid] = true end
+                            seenFull[full] = true
+
+                        local okBase, base = pcall(function() return full:match("^[^-]+") end)
+                        local name = (okBase and base) or full
+
+                        -- Stable ordering key (prefer GUID, else full name).
+                        local okey = guid or full
+                        local ord = self._rosterOrderByKey[okey]
+                        if not ord then
+                            self._rosterOrderSeq = self._rosterOrderSeq + 1
+                            ord = self._rosterOrderSeq
+                            self._rosterOrderByKey[okey] = ord
+                        end
+
+                        -- Track duplicates correctly:
+                        -- fullName is the true unique identifier across realms.
+                        self.fullNameCounts[full] = (self.fullNameCounts[full] or 0) + 1
+                        self.baseNameCounts[name] = (self.baseNameCounts[name] or 0) + 1
+                        -- Keep old table for compatibility: treat it as base counts.
+                        self.nameCounts[name] = self.baseNameCounts[name]
+                        self.roster[#self.roster + 1] = {
+                            _order = ord,
+                            guid = guid,
+                            fullName = full,
+                            name = name,
+                            classToken = classToken,
+                            specID = specID,
+                            role = role,
+                            roleAssignedRaw = info.roleAssigned,
+                            raceName = raceName,
+                            raceID = raceID,
+                            classID = classID,
+                            faction = factionIndex,
+                            -- level/sex are learned later from real unit tokens if needed
+                            level = 0,
+                            sex = 0,
+                            honorLevel = honorLevel,
+                        }
+                        end
+                    end
+                end
+            end
+        end
+
+        -- Apply deterministic ordering:
+        -- 1) "Grouped (sorted)" -> TANK, HEALER, DAMAGER (then stable first-seen order)
+        -- 2) "Single list"      -> stable first-seen order only (no mid-match reshuffles)
+        local layout = GetSetting("bgeLayout", 1)
+        local grouped = (layout == 2)
+        table.sort(self.roster, function(a, b)
+            if grouped then
+                local ra, rb = RoleRank(a.role), RoleRank(b.role)
+                if ra ~= rb then return ra < rb end
+            end
+            local oa, ob = tonumber(a._order) or 0, tonumber(b._order) or 0
+            if oa ~= ob then return oa < ob end
+            return (a.fullName or "") < (b.fullName or "")
+        end)
+        if #self.roster == 0 then
+            DPrintMissing("BUILD_ZERO", "BuildRoster zero n=" .. tostring(n) .. 
+                " myFI=" .. tostring(NormalizeFactionIndex(myFactionIndex) or "nil") .. 
+                " row1FI=" .. tostring((function() local ok, info = pcall(_G.C_PvP.GetScoreInfo, 1); return ok and type(info) == "table" and (NormalizeFactionIndex(info.faction) or "nil") or "nil" end)()) .. 
+                " row1Name=" .. tostring((function() local ok, info = pcall(_G.C_PvP.GetScoreInfo, 1); return ok and type(info) == "table" and (SafeNonEmptyString(info.name) or "nil") or "nil" end)())) 
+        end
+        return
+    end
+
+    -- Legacy fallback (no GUID): keep existing class list behaviour.
+    -- This won't be able to GUID-match nameplates, but it preserves old behaviour.
+    self:RebuildScoreCache()
+
+    do
+        local rosterN = (self.roster and #self.roster) or 0
+        local scoreTotal = 0
+        if _G.GetNumBattlefieldScores then
+            local okT, total = pcall(_G.GetNumBattlefieldScores)
+            if okT and type(total) == "number" then
+                scoreTotal = total
+            end
+        end
+
+        local first = self.roster and self.roster[1] or nil
+        DPrint("BUILD_ROSTER_SUMMARY",
+            "BuildRosterFromScoreboard scoreTotal=" .. tostring(scoreTotal) ..
+            " rosterN=" .. tostring(rosterN) ..
+            " expected=" .. tostring(self._expectedBGTeamSize or self._expectedBGTeamSizeGuess or "nil") ..
+            " first.guid=" .. tostring(first and SafeToString(first.guid) or "nil") ..
+            " first.name=" .. tostring(first and SafeToString(first.name) or "nil") ..
+            " first.full=" .. tostring(first and SafeToString(first.fullName) or "nil") ..
+            " first.class=" .. tostring(first and SafeToString(first.classToken) or "nil")
+        )
+    end
+
+end
 
 local function GetPlayerDB()
     -- Ensure SavedVariables are loaded (RatedStats wires Database in LoadData()).
@@ -1423,33 +1886,60 @@ function BGE:SetSelectedRow(row)
 end
 
 function BGE:SyncSelectedRowToTarget()
+    -- If no target, clear highlight.
     if not UnitExists("target") then
         self:SetSelectedRow(nil)
         return
     end
 
+    -- 1) Best path: unit-token match, but scrub API returns (they can be secret booleans).
     for _, row in ipairs(self.rows or {}) do
         if row and not row._preview then
             local u = row.unit
             if type(u) == "string" and u ~= "" then
                 local okE, ex = pcall(UnitExists, u)
-                if okE and ex == true then
-                    local okI, same = pcall(UnitIsUnit, "target", u)
-                    if okI and same == true then
-                        self:SetSelectedRow(row)
-                        return
+                if okE then
+                    if scrubsecretvalues then ex = scrubsecretvalues(ex) end
+                    if ex == true then
+                        local okI, same = pcall(UnitIsUnit, "target", u)
+                        if okI then
+                            if scrubsecretvalues then same = scrubsecretvalues(same) end
+                            if same == true then
+                                self:SetSelectedRow(row)
+                                return
+                            end
+                        end
                     end
                 end
             end
         end
     end
 
+    -- 2) Fallback: GUID match (guarded).
     local guid = SafeUnitGUID("target")
+    if scrubsecretvalues then
+        guid = scrubsecretvalues(guid)
+    end
     if type(guid) == "string" and guid ~= "" and self.rowByGuid then
         local ok, hit = pcall(function() return self.rowByGuid[guid] end)
         if ok and hit then
             self:SetSelectedRow(hit)
             return
+        end
+    end
+
+    -- 3) Last resort: name match, but scrub secrets before any boolean tests.
+    if self.rowByFullName then
+        local okN, full = pcall(GetUnitName, "target", true)
+        if okN then
+            if scrubsecretvalues then full = scrubsecretvalues(full) end
+            if type(full) == "string" and full ~= "" then
+                local okR, hit = pcall(function() return self.rowByFullName[full] end)
+                if okR and hit then
+                    self:SetSelectedRow(hit)
+                    return
+                end
+            end
         end
     end
 
@@ -1515,6 +2005,7 @@ function BGE:ApplyMode()
             if want == "arena" and i <= self.arenaMax then
                 row:SetAttribute("unit", ArenaUnitFromIndex(i))
             else
+                -- BG roster rows: unit is assigned by GUID->nameplate match.
                 row:SetAttribute("unit", nil)
             end
         end
@@ -1522,16 +2013,16 @@ function BGE:ApplyMode()
 end
 
 local PREVIEW_ROSTER = {
-    { name = "Druid",        classFile = "DRUID" },
-    { name = "Shaman",       classFile = "SHAMAN" },
-    { name = "Priest",       classFile = "PRIEST" },
-    { name = "Demon Hunter", classFile = "DEMONHUNTER" },
-    { name = "Warrior",      classFile = "WARRIOR" },
-    { name = "Paladin",      classFile = "PALADIN" },
-    { name = "Rogue",        classFile = "ROGUE" },
-    { name = "Hunter",       classFile = "HUNTER" },
-    { name = "Mage",         classFile = "MAGE" },
-    { name = "Warlock",      classFile = "WARLOCK" },
+    { name = "Druid",        classFile = "DRUID",       role = "HEALER"  },
+    { name = "Shaman",       classFile = "SHAMAN",      role = "HEALER"  },
+    { name = "Priest",       classFile = "PRIEST",      role = "HEALER"  },
+    { name = "Demon Hunter", classFile = "DEMONHUNTER", role = "TANK"    },
+    { name = "Warrior",      classFile = "WARRIOR",     role = "DAMAGER" },
+    { name = "Paladin",      classFile = "PALADIN",     role = "DAMAGER" },
+    { name = "Rogue",        classFile = "ROGUE",       role = "DAMAGER" },
+    { name = "Druid",        classFile = "DRUID",       role = "DAMAGER" },
+    { name = "Mage",         classFile = "MAGE",        role = "DAMAGER" },
+    { name = "Warlock",      classFile = "WARLOCK",     role = "DAMAGER" },
 }
 
 function BGE:ClearPreviewRows()
@@ -1610,9 +2101,554 @@ local function ExtractSpecIDFromScoreTuple(t)
     return nil
 end
 
+function BGE:RebuildScoreCache()
+    wipe(self.scoreCache)
+    wipe(self.scoreClassList)
 
+    -- Do not touch scoreboard names in bad BG states:
+    -- 1) our own team roster never fully populated at engage
+    -- 2) we /reloaded or entered while the match was already engaged
+    if self._teamDidNotFullyEnter or self._enteredMidMatch then
+        self.scoreCacheAt = GetTime()
+        return
+    end
 
+    if not _G.GetNumBattlefieldScores or not _G.GetBattlefieldScore then
+        self.scoreCacheAt = GetTime()
+        return
+    end
 
+    local n = GetNumBattlefieldScores() or 0
+    for i = 1, n do
+        local tuple = { GetBattlefieldScore(i) }
+        local nameRealm = SafeNonEmptyString(tuple[1])
+        if nameRealm then
+            local okBase, base = pcall(function() return nameRealm:match("^[^-]+") end)
+            base = (okBase and base) or nameRealm
+            local rec = self.scoreCache[base]
+            if not rec then
+                rec = { count = 0 }
+                self.scoreCache[base] = rec
+            end
+            rec.count = rec.count + 1
+
+            -- Capture class token from the scoreboard (for BG start seeding)
+            local classFile = ExtractClassFileFromScoreTuple(tuple)
+            if classFile then
+                rec.classFile = rec.classFile or classFile
+                self.scoreClassList[#self.scoreClassList + 1] = classFile
+            end
+
+            -- Only store role data if currently unique.
+            if rec.count == 1 then
+                local specID = ExtractSpecIDFromScoreTuple(tuple)
+                if specID and _G.GetSpecializationRoleByID then
+                    local ok, role = pcall(_G.GetSpecializationRoleByID, specID)
+                    if ok and type(role) == "string" and role ~= "" then
+                        rec.role = role
+                    else
+                        rec.role = nil
+                    end
+                else
+                    rec.role = nil
+                end
+            else
+                -- Duplicate name: disable role display for that base name.
+                rec.role = nil
+            end
+        end
+    end
+
+    self.scoreCacheAt = GetTime()
+
+    -- Apply to any visible live rows immediately.
+    for _, row in ipairs(self.rows) do
+        if row and row:IsShown() and not row._preview then
+            self:UpdateRoleIcon(row)
+        end
+    end
+end
+
+function BGE:ApplyRowMacroTarget(row)
+    if not row or row._preview then return end
+
+    -- Prefer realm-qualified targeting 
+    local targetName = row.fullName or row.name
+    if type(targetName) ~= "string" or targetName == "" then
+        if not InLockdown() then
+            row:SetAttribute("macrotext", nil)
+        else
+            self.pendingMacroByRow = self.pendingMacroByRow or {}
+            self.pendingMacroByRow[row] = nil
+        end
+        return
+    end
+
+    -- /targetexact is the reliable method here (unit tokens on enemy nameplates are not)
+    local macro = "/cleartarget\n/targetexact " .. targetName
+
+    if not InLockdown() then
+        row:SetAttribute("macrotext", macro)
+    else
+        self.pendingMacroByRow = self.pendingMacroByRow or {}
+        self.pendingMacroByRow[row] = macro
+    end
+end
+
+function BGE:HasUnresolvedSeededRows()
+    -- If we haven't successfully seeded anything yet, we definitely still need reseeds.
+    if not self._seededThisBG or not self._seedCount or self._seedCount == 0 then
+        return true
+    end
+
+    for i = 1, self._seedCount do
+        local row = self.rows and self.rows[i] or nil
+        if not row or not row._seenIdentity then
+            return true
+        end
+
+        local nameOK = (type(row.name) == "string" and row.name ~= "")
+        local classOK = (type(row.classFile) == "string" and row.classFile ~= "")
+        local idOK =
+            (type(row.guid) == "string" and row.guid ~= "") or
+            (type(row.fullName) == "string" and row.fullName ~= "")
+
+        if not (nameOK and classOK and idOK) then
+            return true
+        end
+    end
+
+    return false
+end
+
+function BGE:SeedRowsFromScoreboard()
+    -- BG only (arena uses arena1..arena5)
+    if self._mode == "arena" then return end
+    if not IsInPVPInstance() then
+        DPrintMissing("SEED_SKIP_NOPVP", "SeedRowsFromScoreboard skip: not in pvp")
+        return
+    end
+    if self._scoreLocked then
+        DPrintMissing("SEED_SKIP_LOCKED", "SeedRowsFromScoreboard skip: scoreLocked=1")
+        return
+    end
+
+    -- Throttle: UPDATE_BATTLEFIELD_SCORE can fire very frequently in busy fights.
+    local now = GetTime()
+    local minGap = (self._matchStarted and 5.0) or 1.0
+    if self._lastSeedAt and (now - self._lastSeedAt) < minGap then
+        DPrintMissing("SEED_SKIP_THROTTLE",
+            "SeedRowsFromScoreboard skip: throttled dt=" .. string.format("%.2f", now - self._lastSeedAt) ..
+            " minGap=" .. string.format("%.2f", minGap)
+        )
+        return
+    end
+    self._lastSeedAt = now
+
+    local scoreTotal = 0
+    if _G.GetNumBattlefieldScores then
+        local okT, total = pcall(_G.GetNumBattlefieldScores)
+        if okT and type(total) == "number" then
+            scoreTotal = total
+        end
+    end
+
+    DPrint("SEED_ENTER",
+        "SeedRowsFromScoreboard enter scoreTotal=" .. tostring(scoreTotal) ..
+        " expected=" .. tostring(self._expectedBGTeamSize or "nil") ..
+        " guess=" .. tostring(self._expectedBGTeamSizeGuess or "nil") ..
+        " seeded=" .. Bool01(self._seededThisBG) ..
+        " seedCount=" .. tostring(self._seedCount or 0) ..
+        " matchStarted=" .. Bool01(self._matchStarted) ..
+        " scoreLocked=" .. Bool01(self._scoreLocked)
+    )
+
+    -- Build roster from the scoreboard.
+    self:BuildRosterFromScoreboard()
+
+    local rosterN = (self.roster and #self.roster) or 0
+    local expected = self._expectedBGTeamSize or self._expectedBGTeamSizeGuess
+
+    DPrint("SEED_AFTER_BUILD",
+        "SeedRowsFromScoreboard after build rosterN=" .. tostring(rosterN) ..
+        " expected=" .. tostring(expected or "nil")
+    )
+
+    -- Prep phase: once we have a full enemy roster, stop full reseed churn.
+    -- Keep the existing rows/binds and just do a bind scan.
+    if (not self._matchStarted) and expected and rosterN >= expected and self._seededThisBG and self._seedCount == rosterN then
+        for i = 1, (self.maxPlates or 40) do
+            local unit = "nameplate" .. tostring(i)
+            if UnitExists(unit) and not UnitIsFriend("player", unit) then
+            self:HandlePlateAdded(unit)
+        end
+    end
+        self:UpdateRowVisibilities()
+        return
+    end
+
+    -- Mid-match join: don't stop reseeding just because the currently seeded rows look "resolved".
+    -- Only stop once the roster has reached the expected team size for this map.
+    if self._matchStarted and self._seededThisBG and (not self:HasUnresolvedSeededRows()) then
+        local rosterN = (self.roster and #self.roster) or 0
+
+        -- IMPORTANT: do not default expected=10 here.
+        -- If we guess 10 too early in a 15v15, we permanently stop at 10.
+        local expected = self._expectedBGTeamSize
+        if not expected then
+            -- Solo RBG / Blitz are 8v8. Treat these as 8 explicitly.
+            local isSoloRBG = false
+            if C_PvP and C_PvP.IsRatedSoloRBG then
+                local ok, v = pcall(C_PvP.IsRatedSoloRBG)
+                if ok and v then isSoloRBG = true end
+            end
+            if (not isSoloRBG) and C_PvP and C_PvP.IsSoloRBG then
+                local ok, v = pcall(C_PvP.IsSoloRBG)
+                if ok and v then isSoloRBG = true end
+            end
+            if isSoloRBG then
+                expected = 8
+            end
+
+            local mapID = nil
+            if C_Map and C_Map.GetBestMapForUnit then
+                local okM, mid = pcall(C_Map.GetBestMapForUnit, "player")
+                if okM then mapID = mid end
+            end
+
+            local maxPlayers = nil
+            -- Prefer resolved maxPlayers first.
+            if mapID and C_PvP and C_PvP.GetNumBattlegroundTypes and C_PvP.GetBattlegroundInfo then
+                local okN, tN = pcall(C_PvP.GetNumBattlegroundTypes)
+                if okN and type(tN) == "number" then
+                    for idx = 1, tN do
+                        local okI, bi = pcall(C_PvP.GetBattlegroundInfo, idx)
+                        if okI and bi and bi.mapID == mapID and type(bi.maxPlayers) == "number" then
+                            maxPlayers = bi.maxPlayers
+                            break
+                        end
+                    end
+                end
+            end
+
+            if maxPlayers and maxPlayers > 15 then
+                expected = 40
+            elseif maxPlayers and maxPlayers == 15 then
+                expected = 15
+            elseif maxPlayers and maxPlayers == 10 then
+                expected = 10
+            -- Fallback only if maxPlayers not resolved:
+            elseif maxPlayers and maxPlayers == 8 then
+                expected = 8
+            end
+
+            -- Fallback: infer from scoreboard total once it has populated.
+            -- GetNumBattlefieldScores is BOTH teams.
+            if not expected and _G.GetNumBattlefieldScores then
+                local enteredAt = self._enteredBGAt or now
+                local age = now - enteredAt
+                local okT, total = pcall(_G.GetNumBattlefieldScores)
+                total = (okT and type(total) == "number") and total or 0
+
+                if total >= 41 then
+                    expected = 40
+                elseif total >= 21 then
+                    expected = 15
+                elseif total <= 16 then
+                    -- 8v8 (both teams) once the scoreboard has actually populated
+                    expected = 8
+                elseif age >= 90 and rosterN >= 10 then
+                    -- Only decide 10v10 once we've had time for the scoreboard to fill.
+                    expected = 10
+                end
+            end
+
+            if expected then
+                self._expectedBGTeamSize = expected
+            end
+        end
+
+        if expected and rosterN >= expected then
+            return
+        end
+        -- roster still short: allow reseed to continue
+    end
+
+    -- BG start AND active-join: scoreboard feed often populates late. If roster is short, retry quickly.
+    local enteredAt = self._enteredBGAt or now
+    local justEntered = (now - enteredAt) <= 20
+    if (_G.C_Timer and _G.C_Timer.After) and ((not self._matchStarted) or justEntered) then
+        local expected = self._expectedBGTeamSize or self._expectedBGTeamSizeGuess
+        -- last resort: if expected still unknown, use current display capacity (GUESS ONLY)
+        if not expected then
+            local cols = GetSetting("bgeColumns", 1)
+            local rowsPerCol = GetSetting("bgeRowsPerCol", 20)
+            local want = math.floor((cols or 1) * (rowsPerCol or 20))
+            if want > 0 then
+                expected = math.min(self.maxPlates or 40, want)
+                self._expectedBGTeamSizeGuess = expected
+            end
+        end
+
+        if expected and self.roster and #self.roster < expected then
+            if not self._seedRetryPending then
+                self._seedRetryPending = true
+                self._seedStartRetries = (self._seedStartRetries or 0) + 1
+                if self._seedStartRetries <= 40 then
+                    _G.C_Timer.After(0.5, function()
+                        -- clear pending first to avoid getting stuck if we bail early
+                        BGE._seedRetryPending = false
+                        BGE._lastSeedAt = nil -- bypass throttle for this start-only retry
+                        if _G.RequestBattlefieldScoreData then
+                            pcall(_G.RequestBattlefieldScoreData)
+                        end
+                        BGE:SeedRowsFromScoreboard()
+                    end)
+                else
+                    self._seedRetryPending = false
+                end
+            end
+        end
+    end
+
+    -- Preserve live nameplate bindings across reseeds.
+    -- Roster rows are stable by GUID; nameplates do NOT reliably refire ADDED events mid-match.
+    local oldUnitByGuid = {}
+    local oldUnitByFullName = {}
+    local oldUnitByBaseName = {}
+    if self.rowByUnit then
+        for unit, r in pairs(self.rowByUnit) do
+            if r and UnitExists(unit) then
+                if r.guid then
+                    oldUnitByGuid[r.guid] = unit
+                end
+                if r.fullName then
+                    oldUnitByFullName[r.fullName] = unit
+                end
+                -- Only keep base-name preservation when unique (same rule as binding).
+                if r.name and self.baseNameCounts and self.baseNameCounts[r.name] == 1 then
+                    oldUnitByBaseName[r.name] = unit
+                end
+            end
+        end
+    end
+
+    -- Full reseed every tick: scoreboard order can shift while players join/leave.
+    -- Append-only seeding WILL drift and duplicate identities.
+    wipe(self.rowByGuid)
+    wipe(self.rowByName)
+    wipe(self.rowByFullName)
+    wipe(self.rowByBaseName)
+    wipe(self.rowByPID)
+    wipe(self.pidCounts)
+
+    -- Rebuild unit bindings from preserved GUID matches where possible.
+    wipe(self.rowByUnit)
+
+    local rosterN = (self.roster and #self.roster) or 0
+    local max = math.min(self.maxPlates, rosterN)
+
+    -- Clear any unused rows (players left / not yet present).
+    for i = max + 1, self.maxPlates do
+        local row = self.rows[i]
+        if row and not row._preview then
+            self:ReleaseRow(row)
+            row._seenIdentity = nil
+            row:SetAlpha(0)
+        end
+    end
+
+    if max == 0 then
+        DPrintMissing("SEED_MAX_ZERO",
+            "SeedRowsFromScoreboard max=0 rosterN=" .. tostring(rosterN or 0) ..
+            " maxPlates=" .. tostring(self.maxPlates or 0) ..
+            " expected=" .. tostring(self._expectedBGTeamSize or self._expectedBGTeamSizeGuess or "nil")
+        )
+        self._seededThisBG = false
+        self._seedCount = 0
+        self._expectedBGTeamSize = nil
+        self._expectedBGTeamSizeGuess = nil
+        self._seedStartRetries = nil
+        self._seedRetryPending = nil
+        self._latchedBGWant = nil
+        self._latchedBGKind = nil
+        self:UpdateRowVisibilities()
+        return
+    end
+
+    -- Seed rows 1..max from roster.
+    for i = 1, max do
+        local row = self.rows[i]
+        local rec = self.roster[i]
+        if row and rec and not row._preview then
+            local prevGuid = row.guid
+            local prevFull = row.fullName
+
+            row.guid = rec.guid
+            row.name = rec.name
+            row.fullName = rec.fullName
+            self:ApplyRowMacroTarget(row)
+
+            local identityChanged =
+                (prevGuid and row.guid and prevGuid ~= row.guid) or
+                (not prevGuid and prevFull and row.fullName and prevFull ~= row.fullName)
+
+            -- Only reset binding when this row represents a different player.
+            if identityChanged then
+                row.unit = nil
+                row.unitID = nil
+				row._unitIDKind = nil
+				row._altUnit = nil
+				row._altSeenAt = nil
+				if row.UnitIDs then
+					row.UnitIDs.Nameplate = nil
+					row.UnitIDs.Target = nil
+					row.UnitIDs.Focus = nil
+					row.UnitIDs.Mouseover = nil
+					row.UnitIDs.SoftEnemy = nil
+					row.UnitIDs.GroupTarget = nil
+					row.UnitIDs.NameplateTarget = nil
+				end
+            end
+
+            -- Only clear text if this row now represents a different player.
+            if identityChanged then
+--                row.hpText:SetText("")
+--                row._lastHpTextAt = nil
+            end
+
+            -- Achievements: seed once per unique player (per BG), not every reseed tick.
+            self.achievCache = self.achievCache or {}
+            local akey = row.fullName or row.name
+            local cached = akey and self.achievCache[akey] or nil
+            if cached == nil then
+                local tex, txt, tint = GetIconTextureForEnemyName(row.fullName, row.name)
+                cached = { tex = tex, txt = txt, tint = tint }
+                if akey then
+                    self.achievCache[akey] = cached
+                end
+            end
+            local hadAchTex = row.achievIconTex
+            row.achievIconTex = cached and cached.tex or nil
+            row.achievText    = cached and cached.txt or nil
+            row.achievTint    = cached and cached.tint or nil
+
+            -- If Achievements became available after initial layout, force a relayout so the icon is placed.
+            if (not hadAchTex) and row.achievIconTex then
+                if InLockdown() then
+                    self._anchorsDirty = true
+                else
+                    self:ApplyRowLayout(row)
+                end
+            end
+
+            row.raceID = rec.raceID
+            row.classID = rec.classID
+            row.faction = rec.faction
+            row.level = 0
+            row.sex = 0
+            row.honorLevel = rec.honorLevel
+            row.classFile = rec.classToken
+            row.specID = rec.specID
+            row.role = rec.role
+            row._seeded = true
+
+            -- Restore prior live unit binding if we had one for this GUID.
+            local u = nil
+            if row.guid and oldUnitByGuid[row.guid] then
+                u = oldUnitByGuid[row.guid]
+            elseif row.fullName and oldUnitByFullName[row.fullName] then
+                u = oldUnitByFullName[row.fullName]
+            elseif row.name and self.baseNameCounts and self.baseNameCounts[row.name] == 1 and oldUnitByBaseName[row.name] then
+                u = oldUnitByBaseName[row.name]
+            end
+            if u and UnitExists(u) and not UnitIsFriend("player", u) then
+                row.unit = u
+                row.UnitIDs = row.UnitIDs or {}
+                row.UnitIDs.Nameplate = u
+                row.unitID = u
+                row._unitIDKind = "Nameplate"
+                self.rowByUnit[u] = row
+                -- Force a snap update now that the binding is restored.
+                self:UpdateHealth(row, u)
+                self:UpdatePower(row, u)
+            else
+				if row.UnitIDs then
+                    self:ResolveEnemyPrimaryUnitID(row)
+                end
+            end
+
+            -- GUID->row lookup
+            if row.guid then
+                self.rowByGuid[row.guid] = row
+            end
+
+            -- PID map (unique-only)
+            local pid = CalculatePIDFull(row.raceID, row.classID, row.level, row.faction, row.sex, row.honorLevel)
+            row.pid = pid
+            if pid and pid > 0 then
+                local c = (self.pidCounts[pid] or 0) + 1
+                self.pidCounts[pid] = c
+                if c == 1 then
+                    self.rowByPID[pid] = row
+                else
+                    self.rowByPID[pid] = nil
+                end
+            end
+
+            -- Display: base name only (no -realm)
+            row.nameText:SetText(row.name)
+            row.nameText:SetTextColor(RS_TEXT_R, RS_TEXT_G, RS_TEXT_B)
+
+            -- Respect current OOR state (don't force "in range" visuals during reseeds).
+            ApplyClassAlpha(row, (row._outOfRange and CLASS_ALPHA_OOR) or CLASS_ALPHA_ACTIVE)
+
+            -- Do NOT clobber live HP/text during periodic reseeds (every ~5s).
+            if not row.unit then
+                pcall(row.hp.SetMinMaxValues, row.hp, 0, 1)
+                pcall(row.hp.SetValue, row.hp, 1)
+                -- keep existing text unless identity changed above
+            end
+            UpdateNameClipToHPFill(row)
+
+            row._seenIdentity = true
+            -- IMPORTANT: do not SetAlpha() here.
+            -- UpdateRowVisibilities() will apply the correct alpha (prep / in-range / OOR / player-dead).
+
+            -- Primary bind key: fullName (safe across realms)
+            if row.fullName and self.fullNameCounts and self.fullNameCounts[row.fullName] == 1 then
+                self.rowByFullName[row.fullName] = row
+                self.rowByName[row.fullName] = row
+            end
+            -- Secondary bind key: base name only when unique
+            if row.name and self.baseNameCounts and self.baseNameCounts[row.name] == 1 then
+                self.rowByBaseName[row.name] = row
+            end
+
+            self:UpdateRoleIcon(row)
+        end
+    end
+
+    self._seededThisBG = true
+    self._seedCount = max
+
+    DPrint("SEED_DONE",
+        "SeedRowsFromScoreboard seeded max=" .. tostring(max) ..
+        " rosterN=" .. tostring(rosterN) ..
+        " guidRows=" .. tostring(self.rowByGuid and next(self.rowByGuid) and "Y" or "N") ..
+        " fullNameRows=" .. tostring(self.rowByFullName and next(self.rowByFullName) and "Y" or "N") ..
+        " baseNameRows=" .. tostring(self.rowByBaseName and next(self.rowByBaseName) and "Y" or "N")
+    )
+
+    -- After reseed, immediately bind any visible nameplates to rows.
+    for i = 1, (self.maxPlates or 40) do
+        local unit = "nameplate" .. tostring(i)
+        if UnitExists(unit) and not UnitIsFriend("player", unit) then
+            self:HandlePlateAdded(unit)
+        end
+    end
+    self:UpdateRowVisibilities()
+end
 
 function BGE:IsMatchStarted()
     if not (C_PvP and C_PvP.GetActiveMatchState) then return false end
@@ -1633,6 +2669,12 @@ function BGE:UpdateMatchState()
     if not inPvp then
         self._matchStarted = false
         self._oorEnabled = false
+        self._scoreLocked = false
+        self._seedPending = false
+        self._teamDidNotFullyEnter = false
+        self._teamDidNotFullyEnterWarned = false
+        self._enteredMidMatch = false
+        self:StopScoreWarmup()
         self.achievCache = nil -- reset per BG
         return
     end
@@ -1641,18 +2683,172 @@ function BGE:UpdateMatchState()
     self._matchStarted = self:IsMatchStarted()
     if self._matchStarted then
         self._oorEnabled = true
+        -- 12.0.1+: scoreboard player data can become secret during an active match.
+        -- Once Engaged, stop all scoreboard-driven seeding for this match.
         if not wasStarted then
+            local enteredAt = self._enteredBGAt or GetTime()
+            local sinceEnter = GetTime() - enteredAt
+
+            self._scoreLocked = true
+            self._seedPending = false
+            self:StopScoreWarmup()
+
+            -- If we see Engaged almost immediately after entering/applying settings,
+            -- treat it as /reload or joining mid-match.
+            if self._mode ~= "arena" and sinceEnter <= 3 then
+                self._enteredMidMatch = true
+            end
+
+            if self._mode ~= "arena" then
+                local expected = self._expectedBGTeamSize or self._expectedBGTeamSizeGuess
+                local rosterN = (self.roster and #self.roster) or 0
+
+                if expected and rosterN < expected then
+                    self._teamDidNotFullyEnter = true
+
+                    if not self._teamDidNotFullyEnterWarned then
+                        self._teamDidNotFullyEnterWarned = true
+                        PrintTeamRosterDidNotFill()
+                    end
+
+                    self:RefreshVisibility()
+                    return
+                end
+            end
+
+            -- Optional (but recommended): bind any already-visible nameplates to seeded rows.
             if self.EngagedNameplateSweep then
                 self:EngagedNameplateSweep()
             end
         end
+    else
+        -- Pre-match: allow scoreboard seeding.
+        self._scoreLocked = false
     end
 end
 
+-- Schedule a reseed soon, but collapse bursts of score updates into one call.
+function BGE:ScheduleSeedFromScoreboard()
+    -- Once match is Engaged, scoreboard APIs may return secret/blocked fields; don't bother.
+    if self._scoreLocked or self:IsMatchStarted() then
+        self._scoreLocked = true
+        return
+    end
+    if self._seedPending then return end
+    self._seedPending = true
+    C_Timer.After(0.5, function()
+        self._seedPending = false
+        if not IsInPVPInstance() or self._mode == "arena" or not GetSetting("bgeEnabled", true) then return end
+        if self._scoreLocked or self:IsMatchStarted() then
+            self._scoreLocked = true
+            return
+        end
+        if _G.RequestBattlefieldScoreData then
+            pcall(_G.RequestBattlefieldScoreData)
+        end
+        self:RebuildScoreCache()
+        self:SeedRowsFromScoreboard()
+    end)
+end
 
 -- Short BG-entry warmup: scoreboard often starts at 0 until it gets a push.
+function BGE:StartScoreWarmup()
+    if self._scoreWarmupTicker then return end
+    self._scoreWarmupStartedAt = GetTime()
+    -- Long-lived keepalive: BGs can be joined late and score data can lag.
+    -- Keep it LOW frequency to avoid combat hitching.
+    self._scoreWarmupTicker = C_Timer.NewTicker(0.5, function()
+        if not IsInPVPInstance() or self._mode == "arena" or not GetSetting("bgeEnabled", true) then
+            self:StopScoreWarmup()
+            return
+        end
 
+        -- Stop warmup as soon as the match starts (scoreboard becomes unreliable/secret).
+        if self:IsMatchStarted() then
+            local rosterN = (self.roster and #self.roster) or 0
+            local enteredAt = self._enteredBGAt or GetTime()
+            local age = GetTime() - enteredAt
 
+            -- If we never got an opening seed, keep trying briefly after gates open.
+            -- Otherwise the frame can stay as just the background forever.
+            if rosterN > 0 or age >= 12 then
+                self._scoreLocked = true
+                self:StopScoreWarmup()
+                return
+            end
+        end
+
+        -- If match started and everything is resolved AND we have filled our display capacity, stop.
+        local cols = GetSetting("bgeColumns", 1)
+        local rowsPerCol = GetSetting("bgeRowsPerCol", 20)
+        local want = math.floor((cols or 1) * (rowsPerCol or 20))
+        if want < 1 then want = 1 end
+        if want > (self.maxPlates or 40) then want = (self.maxPlates or 40) end
+        local rosterN = (self.roster and #self.roster) or 0
+        local expected = self._expectedBGTeamSize or self._expectedBGTeamSizeGuess
+        local startedAt = self._scoreWarmupStartedAt or GetTime()
+        local age = GetTime() - startedAt
+
+        -- Stop once resolved; do not require roster to reach "want" (settings can exceed actual team size).
+        if self._matchStarted and self._seededThisBG and (not self:HasUnresolvedSeededRows()) then
+            if (expected and rosterN >= expected) or (age >= 90) then
+                self:StopScoreWarmup()
+                return
+            end
+        end
+
+        if self._matchStarted and self._seededThisBG and (not self:HasUnresolvedSeededRows()) and rosterN >= want then
+            self:StopScoreWarmup()
+            return
+        end
+
+        -- If we're in combat, don't hammer the scoreboard.
+        if UnitAffectingCombat and UnitAffectingCombat("player") then return end
+
+        if _G.RequestBattlefieldScoreData then
+            pcall(_G.RequestBattlefieldScoreData)
+        end
+        self:RebuildScoreCache()
+        self:SeedRowsFromScoreboard()
+    end)
+end
+
+function BGE:StopScoreWarmup()
+    if self._scoreWarmupTicker then
+        self._scoreWarmupTicker:Cancel()
+        self._scoreWarmupTicker = nil
+    end
+    self._scoreWarmupStartedAt = nil
+end
+
+function BGE:UpdateRoleIcon(row)
+    if not row or not row.roleIcon then return end
+    if not row.name then
+        return
+    end
+
+    -- Prefer roster role
+    if row.role then
+        if SetRoleTexture(row.roleIcon, row.role) then
+            row.roleIcon:Show()
+        else
+            row.roleIcon:Hide()
+        end
+        return
+    end
+
+    local rec = self.scoreCache and self.scoreCache[row.name] or nil
+    if not rec or rec.count ~= 1 or not rec.role then
+        row.roleIcon:Hide()
+        return
+    end
+
+    if SetRoleTexture(row.roleIcon, rec.role) then
+        row.roleIcon:Show()
+    else
+        row.roleIcon:Hide()
+    end
+end
 
 UpdateNameClipToHPFill = function(row)
     if not row or not row.hp or not row.nameText then return end
@@ -2088,8 +3284,11 @@ function BGE:UpdateRowVisibilities()
         DPrint("ROW_VIS",
             "UpdateRowVisibilities visible=" .. tostring(visible) ..
             " identified=" .. tostring(identified) ..
+            " seedCount=" .. tostring(self._seedCount or 0) ..
+            " seeded=" .. Bool01(self._seededThisBG) ..
             " matchStarted=" .. Bool01(self._matchStarted) ..
-            " oor=" .. Bool01(self._oorEnabled)
+            " oor=" .. Bool01(self._oorEnabled) ..
+            " hiddenByTeamFail=" .. Bool01(self._teamDidNotFullyEnter)
         )
     end
 end
@@ -2108,19 +3307,18 @@ end
 function BGE:ReleaseRow(row)
     if not row then return end
 
-    if row.unit and self.rowByUnit and self.rowByUnit[row.unit] == row then
-        self.rowByUnit[row.unit] = nil
-    end
-    if row.guid and self.rowByGuid and self.rowByGuid[row.guid] == row then
-        self.rowByGuid[row.guid] = nil
-    end
-
     row.unit = nil
-    row.unitID = nil
-    row._unitIDKind = nil
-    if row.UnitIDs then
-        wipe(row.UnitIDs)
-    end
+	row.unitID = nil
+	if row.UnitIDs then
+		wipe(row.UnitIDs)
+		row.UnitIDs.Nameplate = nil
+		row.UnitIDs.Target = nil
+		row.UnitIDs.Focus = nil
+		row.UnitIDs.Mouseover = nil
+		row.UnitIDs.SoftEnemy = nil
+		row.UnitIDs.GroupTarget = nil
+		row.UnitIDs.NameplateTarget = nil
+	end
     row.guid = nil
     row.name = nil
     row.fullName = nil
@@ -2130,8 +3328,7 @@ function BGE:ReleaseRow(row)
     row.classFile = nil
     row.role = nil
     row.specID = nil
-    row._seenIdentity = nil
-    row._outOfRange = false
+    row._seeded = nil
     pcall(row.hpText.SetText, row.hpText, "")
     row.nameText:SetText("")
     if row.roleIcon then row.roleIcon:Hide() end
@@ -2141,51 +3338,131 @@ function BGE:ReleaseRow(row)
     row.power:SetValue(0)
     row.power:Hide()
     row.bg:SetColorTexture(0, 0, 0, 0.35)
+    -- Never Hide/Show secure rows. Alpha-only.
     row:SetAlpha(0)
 end
 
 function BGE:UpdateIdentity(row, unit)
     if not UnitExists(unit) then return end
-    if UnitIsFriend("player", unit) and not row.unit then return end
+    -- Don't deadlock on UnitIsEnemy being nil/false right after NAME_PLATE_UNIT_ADDED.
+    -- We only hard-skip confirmed friendlies.
+    if UnitIsFriend("player", unit) then return end
 
-    local oldGuid = row.guid
-    local guid = SafeUnitGUID(unit)
-    local full, base = GetNameplateDisplayNames(unit)
-    local name = base or full
-    local _, classFile = SafeUnitClass(unit)
-
-    if oldGuid and self.rowByGuid and self.rowByGuid[oldGuid] == row and oldGuid ~= guid then
-        self.rowByGuid[oldGuid] = nil
+    -- Prefer GUID -> scoreboard identity (avoids secret UnitName issues on nameplates).
+    if not row.guid then
+        row.guid = SafeUnitGUID(unit)
     end
 
-    row.guid = guid
-    row.fullName = full or row.fullName
-    row.name = name or row.name
-    row.role = nil
-    row.specID = nil
-    if row.roleIcon then row.roleIcon:Hide() end
-
-    if row.guid and self.rowByGuid then
-        self.rowByGuid[row.guid] = row
+    local name, classFile
+    if row.guid and _G.C_PvP and _G.C_PvP.GetScoreInfoByPlayerGuid then
+        local okInfo, info = pcall(_G.C_PvP.GetScoreInfoByPlayerGuid, row.guid)
+        if okInfo and type(info) == "table" then
+            local full = SafeNonEmptyString(info.name)
+            if full then
+                row.fullName = full
+                local okBase, base = pcall(function() return full:match("^[^-]+") end)
+                name = (okBase and base) or full
+            end
+            classFile = SafeNonEmptyString(info.classToken)
+        end
     end
 
-    if row.name then
-        row.nameText:SetText(row.name)
+    -- Fallback to UnitName/UnitClass only if scoreboard lookup failed.
+    local classLoc
+    if not classFile then
+        classLoc, classFile = SafeUnitClass(unit)
+    else
+        classLoc = nil
+    end
+
+    if name then
+        row.name = name
+        row.nameText:SetText(name)
         row._seenIdentity = true
+        row._seedClass = nil
     end
 
     local classAlpha = (row and row._outOfRange) and CLASS_ALPHA_OOR or CLASS_ALPHA_ACTIVE
+
     if classFile then
         row.classFile = classFile
         local r, g, b = GetClassRGB(classFile)
         row.bg:SetColorTexture(0, 0, 0, 0.35)
         row.hp:SetStatusBarColor(r, g, b, classAlpha)
         row._seenIdentity = true
+    else
+        -- If we don't have a class token yet but we *do* have localized class,
+        -- keep going (don't treat as failure). Colouring waits for classFile.
+        -- (Optional) you can set name text to classLoc if name is still missing,
+        -- but keep it minimal: we just avoid blocking updates here.
+        if row._seedClass and not row.classFile then
+            row.classFile = row._seedClass
+        end
+        -- Don't force "in-range" colouring here; visibility decides alpha.
+        -- This prevents periodic scoreboard reseeds from clobbering OOR/dead visuals mid-fight.
+        local classAlpha = (row._outOfRange and CLASS_ALPHA_OOR) or CLASS_ALPHA_ACTIVE
+        ApplyClassAlpha(row, classAlpha)
     end
+    UpdateNameClipToHPFill(row)
+
+    -- Role icon from scoreboard if unique base-name match.
+    self:UpdateRoleIcon(row)
+
+    local hadAchTex = row.achievIconTex
+    if row.achievIconTex == nil then
+        row.achievIconTex, row.achievText, row.achievTint = GetIconTextureForEnemyName(row.fullName, row.name)
+    end
+    local iconTex = row.achievIconTex
+    if iconTex then
+        row.icon:SetTexture(iconTex)
+        row.icon:Show()
+    else
+        row.icon:Hide()
+    end
+
+    -- If the icon just became available, we must re-run layout so it gets size/points
+    -- and the name text shifts to make room.
+    if (not hadAchTex) and iconTex then
+        if InLockdown() then
+            self._anchorsDirty = true
+        else
+            self:ApplyRowLayout(row)
+        end
+    end
+
+    -- Keep secure macro target up-to-date when identity becomes known.
+    self:ApplyRowMacroTarget(row)
 end
 
 -- Periodic retry: UnitName/UnitClass can be nil for a short time after ADDED/ARENA updates.
 -- UNIT_NAME_UPDATE is not reliable for nameplate units, so we poll lightly while the unit exists.
+function BGE:RetryMissingIdentities()
+    if not self.frame then return end
+    if not GetSetting("bgeEnabled", true) then return end
+    if not IsInPVPInstance() and not GetSetting("bgePreview", false) then return end
+
+    if self._mode == "arena" then
+        for i = 1, self.arenaMax do
+            local row = self.rows[i]
+            if row and not row._preview and row.unit and UnitExists(row.unit) and not UnitIsFriend("player", row.unit) then
+                if not row.name then
+                    self:UpdateIdentity(row, row.unit)
+                end
+            end
+        end
+        return
+    end
+
+    for i = 1, self.maxPlates do
+        local row = self.rows[i]
+        if row and not row._preview and row.unit and UnitExists(row.unit) and not UnitIsFriend("player", row.unit) then
+            if not row.name then
+                DebugUnitSnapshot("RETRY", row.unit)
+                self:UpdateIdentity(row, row.unit)
+            end
+        end
+    end
+end
 
 function BGE:StartLiveBarPoller()
     if self._liveBarPoller then return end
@@ -2418,52 +3695,47 @@ function BGE:UpdatePower(row, unit)
     row.power:Show()
 end
 
-function BGE:AcquireLiveRow(unit)
-    if not unit or not UnitExists(unit) then return nil end
-
-    local row = self.rowByUnit and self.rowByUnit[unit] or nil
-    if row then return row end
-
-    local guid = SafeUnitGUID(unit)
-    if guid and self.rowByGuid then
-        local okRow, hit = pcall(function() return self.rowByGuid[guid] end)
-        if okRow and hit then return hit end
-    end
-
-    for i = 1, (self.maxPlates or 40) do
-        local r = self.rows and self.rows[i] or nil
-        if r and not r._preview and not r.unit and not r._seenIdentity then
-            return r
-        end
-    end
-
-    for i = 1, (self.maxPlates or 40) do
-        local r = self.rows and self.rows[i] or nil
-        if r and not r._preview and not r.unit then
-            return r
-        end
-    end
-
-    return nil
-end
-
 function BGE:GetRowForExternalUnit(unitID)
     if not unitID or not UnitExists(unitID) then return nil end
     if UnitIsFriend("player", unitID) then return nil end
 
-    for _, row in ipairs(self.rows or {}) do
-        if row and not row._preview and row.unit then
-            local okSame, same = pcall(UnitIsUnit, unitID, row.unit)
-            if okSame and same then
-                return row
+    -- 0) Scoreboard name from GUID (works even when UnitName is restricted)
+    do
+        local okG, guidRaw = pcall(UnitGUID, unitID)
+        if okG and guidRaw then
+            local full = ScoreFullNameFromGuid(guidRaw)
+            if full and self.rowByFullName then
+                local okRow, hit = pcall(function() return self.rowByFullName[full] end)
+                if okRow and hit then return hit end
             end
         end
     end
 
+    -- 1) GUID map
     local guid = SafeUnitGUID(unitID)
     if guid and self.rowByGuid then
         local okRow, hit = pcall(function() return self.rowByGuid[guid] end)
         if okRow and hit then return hit end
+    end
+
+    -- 2) Full name map
+    local full, base = SafeUnitFullName(unitID)
+    if full and self.rowByFullName then
+        local okRow, hit = pcall(function() return self.rowByFullName[full] end)
+        if okRow and hit then return hit end
+    end
+    if (not full) and base and self.rowByBaseName and self.baseNameCounts and self.baseNameCounts[base] == 1 then
+        local okRow, hit = pcall(function() return self.rowByBaseName[base] end)
+        if okRow and hit then return hit end
+    end
+
+    -- 3) PID map (seed-compatible strong match)
+    if self.rowByPID then
+        local pid = UnitPIDSeedCompat(unitID)
+        if pid and pid > 0 then
+            local okRow, hit = pcall(function() return self.rowByPID[pid] end)
+            if okRow and hit then return hit end
+        end
     end
 
     return nil
@@ -2716,6 +3988,9 @@ function BGE:HandleUnitTargetChanged(srcUnit)
     if not UnitExists(targetUnit) then return end
     if UnitIsFriend("player", targetUnit) then return end
 
+    -- Only meaningful once we have scoreboard/roster maps
+    if not self.rowByGuid then return end
+
     local row = self:GetRowForExternalUnit(targetUnit)
     if not row then return end
 
@@ -2729,10 +4004,107 @@ function BGE:HandlePlateAdded(unit)
 
     if not GetSetting("bgeEnabled", true) then return end
     if not IsInPVPInstance() then return end
-    if UnitIsFriend("player", unit) then return end
 
-    local row = self:AcquireLiveRow(unit)
-    if not row then return end
+    local guid = SafeUnitGUID(unit)
+    local full = guid and ScoreFullNameFromGuid(guid) or nil
+    local disp1, disp2 = GetNameplateDisplayNames(unit)
+    DPrint("PLATE_ADD:" .. tostring(unit),
+        "HandlePlateAdded unit=" .. tostring(unit) ..
+        " guid=" .. tostring(guid or "nil") ..
+        " scoreFull=" .. tostring(full or "nil") ..
+        " disp1=" .. tostring(SafeToString(disp1) or "nil") ..
+        " disp2=" .. tostring(SafeToString(disp2) or "nil") ..
+        " rowByGuid=" .. Bool01(guid and self.rowByGuid and self.rowByGuid[guid]) ..
+        " rowByFull=" .. Bool01(full and self.rowByFullName and self.rowByFullName[full])
+    )
+
+    -- Prefer GUID->row match, but GUID is often restricted on enemy nameplates in 12.0.
+    -- If GUID is missing/unusable, fall back to the displayed name text on the nameplate frame.
+    local row = nil
+    local lookedUpBy = "none"
+
+    local guid = SafeUnitGUID(unit)
+
+    -- If GUID is restricted/secret and SafeUnitGUID() returns nil, try scoreboard lookup by raw GUID.
+    -- 1) GUID -> scoreboard fullName fallback
+    if not guid and self.rowByFullName then
+        local okG, guidRaw = pcall(UnitGUID, unit)
+        if okG and guidRaw then
+            local full = ScoreFullNameFromGuid(guidRaw)
+            if full then
+                local okRow, hit = pcall(function() return self.rowByFullName[full] end)
+                if okRow and hit then
+                    row = hit
+                    lookedUpBy = "guidScoreName"
+                end
+            end
+        end
+    end
+
+    -- 2) Direct GUID match
+    if guid and self.rowByGuid then
+        local okIdx, hit = pcall(function() return self.rowByGuid[guid] end)
+        if not okIdx then
+            BGE:DebugScoreVsNameplate("PLATE_ADDED_SECRET_INDEX", unit, guid)
+        elseif hit then
+            row = hit
+            lookedUpBy = "guid"
+        end
+    end
+
+    -- 3) Displayed plate text fallback
+    if not row then
+        local disp, dispBase = GetNameplateDisplayNames(unit)
+
+        -- 1) Try full match first (realm-qualified)
+        if disp and self.rowByFullName then
+            local okRow, hit = pcall(function() return self.rowByFullName[disp] end)
+            if okRow and hit then
+                row = hit
+                lookedUpBy = "dispFull"
+            end
+        end
+
+        -- 2) Only if base name is unique, allow base match
+        if (not row) and dispBase and self.rowByBaseName and self.baseNameCounts and self.baseNameCounts[dispBase] == 1 then
+            local okRow, hit = pcall(function() return self.rowByBaseName[dispBase] end)
+            if okRow and hit then
+                row = hit
+                lookedUpBy = "dispBase"
+            end
+        end
+
+        -- 4) PID fallback
+        if (not row) and self.rowByPID then
+            local pid = UnitPIDSeedCompat(unit)
+            if pid and pid > 0 then
+                local okRow, hit = pcall(function() return self.rowByPID[pid] end)
+                if okRow and hit then
+                    row = hit
+                    lookedUpBy = "pid"
+                end
+             end
+        end
+    end
+
+    if not row then
+        if C_Timer and C_Timer.After then
+            self._plateBindRetryPending = self._plateBindRetryPending or {}
+            if not self._plateBindRetryPending[unit] then
+                self._plateBindRetryPending[unit] = true
+                local u = unit
+                C_Timer.After(0.1, function()
+                    local b = _G.RSTATS_BGE
+                    if not b then return end
+                    b._plateBindRetryPending[u] = nil
+                    if UnitExists(u) and IsNameplateUnit(u) and not UnitIsFriend("player", u) then
+                        b:HandlePlateAdded(u)
+                    end
+                end)
+            end
+        end
+        return
+    end
 
     ClearUnitCollision(self, unit, row)
 
@@ -2741,12 +4113,13 @@ function BGE:HandlePlateAdded(unit)
     end
 
     row.unit = unit
-    row.UnitIDs = row.UnitIDs or {}
+	row.UnitIDs = row.UnitIDs or {}
     row.UnitIDs.Nameplate = unit
     row.unitID = unit
     row._unitIDKind = "Nameplate"
     row._preview = false
     row._outOfRange = false
+    row._seeded = nil
     self.rowByUnit[unit] = row
 
     if row._barsUnit ~= unit then
@@ -2769,62 +4142,81 @@ end
 function BGE:HandlePlateRemoved(unit)
     if self._mode == "arena" then return end
     if not IsNameplateUnit(unit) then return end
-
     local row = self.rowByUnit and self.rowByUnit[unit] or nil
     if not row then return end
 
+    -- Do NOT wipe. Keep last known identity/bars and just fade until it returns.
     row.unit = nil
-    if row.UnitIDs then
-        row.UnitIDs.Nameplate = nil
-    end
-    row.unitID = nil
-
-    if self.ResolveEnemyPrimaryUnitID then
-        self:ResolveEnemyPrimaryUnitID(row)
-    end
-
+	if row.UnitIDs then
+		row.UnitIDs.Nameplate = nil
+	end
+	row.unitID = nil
+	if self.ResolveEnemyPrimaryUnitID then
+		self:ResolveEnemyPrimaryUnitID(row)
+	end
     row._barsUnit = nil
     row._hpSB = nil
     row._pwrSB = nil
     self.rowByUnit[unit] = nil
-
     row._outOfRange = true
+    -- Don't force-hide power: it may still refresh via target/focus/ally-target unit tokens.
     ApplyClassAlpha(row, CLASS_ALPHA_OOR)
     row:SetAlpha(row._seenIdentity and ROW_ALPHA_OOR or 0)
 end
 
 function BGE:HandleUnitUpdate(unit, what, force)
+    -- Don't do any BG nameplate work outside a PvP instance.
+    -- (UNIT_* events fire constantly in the open world for creature nameplates.)
     if not GetSetting("bgeEnabled", true) then return end
     local mappedRow = (self._mode ~= "arena") and (self.rowByUnit and self.rowByUnit[unit]) or nil
     if self._mode ~= "arena" then
         if not IsInPVPInstance() then return end
         if not UnitExists(unit) then return end
-        if UnitIsFriend("player", unit) and not mappedRow then return end
+        if UnitIsFriend("player", unit) then return end
+        -- UnitIsPlayer() is unreliable on enemy nameplates after /reload (can return false).
+        -- Only hard-skip confirmed friendlies.
     end
     if self._mode == "arena" then
         if not IsArenaUnit(unit) then return end
     else
         if not IsNameplateUnit(unit) then return end
     end
-
-    local row = mappedRow or self:GetRowForUnit(unit)
+    local row
+    if self._mode == "arena" then
+        row = self:GetRowForUnit(unit)
+    else
+        row = mappedRow
+        if not row then return end
+    end
     if not row then return end
 
-    if (not row.name or not row.classFile) and not row._preview then
-        self:UpdateIdentity(row, unit)
+    if what == "NAME" then
+        DebugUnitSnapshot("UNIT_NAME_UPDATE", unit)
     end
 
-    if what == "NAME" or force then
+    -- If UnitName wasn't ready when the plate was added, keep trying.
+    -- UNIT_NAME_UPDATE is unreliable for nameplate units, so piggyback on HP/PWR events.
+    -- Never compare strings here (row.name may originate from protected sources).
+    if (not row.name) and not row._preview then
+        local now = GetTime()
+        if (not row._lastNameTry) or (now - row._lastNameTry > 1) then
+            row._lastNameTry = now
+            self:UpdateIdentity(row, unit)
+        end
+    end
+
+    if what == "NAME" then
         self:UpdateIdentity(row, unit)
-    end
-    if what == "HP" or force then
+        self:UpdateRowVisibilities()
+    elseif what == "HP" then
         self:UpdateHealth(row, unit)
-    end
-    if what == "PWR" or force then
+    elseif what == "PWR" then
+        local now = GetTime()
+        local last = row._lastPWRAt or 0
+        if (not force) and (now - last) < 0.5 then return end
+        row._lastPWRAt = now
         self:UpdatePower(row, unit)
     end
-
-    self:UpdateRowVisibilities()
 end
 
 function BGE:RefreshVisibility()
@@ -2836,6 +4228,16 @@ function BGE:RefreshVisibility()
         self:StopTargetScanner()
         return
     end
+
+    if IsInPVPInstance() and self._mode ~= "arena" and self._teamDidNotFullyEnter then
+        self.frame:SetAlpha(0)
+        self:StopTargetScanner()
+        self:StopScoreWarmup()
+        if not InLockdown() then
+            self.frame:Hide()
+        end
+        return
+    end    
 
     -- Resolve which per-size profile to use while OUTSIDE PvP.
     -- Preview is only supported for one profile at a time.
@@ -3062,6 +4464,43 @@ function BGE:RefreshVisibility()
         end
 
         self:UpdateFrameTeamTint()
+        -- Keep scoreboard cache warm while in a PvP instance.
+        if IsInPVPInstance() then
+            DPrint("APPLY_PVP",
+                "ApplySettings inPVP=1 mode=" .. tostring(self._mode) ..
+                " expected=" .. tostring(self._expectedBGTeamSize or "nil") ..
+                " guess=" .. tostring(self._expectedBGTeamSizeGuess or "nil") ..
+                " latchedWant=" .. tostring(self._latchedBGWant or "nil") ..
+                " latchedKind=" .. tostring(self._latchedBGKind or "nil")
+            )
+
+            -- Ensure the Blizzard PvP scoreboard addon is loaded so GetNumBattlefieldScores/GetBattlefieldScore
+            -- (and RequestBattlefieldScoreData) exist even before the user opens the scoreboard.
+            -- Without this, seeding won't happen until the scoreboard UI is shown.
+            if (not _G.GetNumBattlefieldScores) or (not _G.GetBattlefieldScore) then
+                if _G.UIParentLoadAddOn then
+                    pcall(_G.UIParentLoadAddOn, "Blizzard_PVPMatch")
+                elseif _G.LoadAddOn then
+                    pcall(_G.LoadAddOn, "Blizzard_PVPMatch")
+                end
+            end
+
+            DPrint("APPLY_SCORE_FUNCS",
+                "scoreFns num=" .. Bool01(_G.GetNumBattlefieldScores) ..
+                " score=" .. Bool01(_G.GetBattlefieldScore) ..
+                " request=" .. Bool01(_G.RequestBattlefieldScoreData)
+            )
+
+            self:RebuildScoreCache()
+            if _G.RequestBattlefieldScoreData then
+                pcall(_G.RequestBattlefieldScoreData)
+            end
+            -- As soon as we have a scoreboard, seed the initial class rows (BG start)
+            self:SeedRowsFromScoreboard()
+
+            -- Keepalive: keep requesting/refreshing score data while in a BG.
+            self:StartScoreWarmup()
+        end
         self:EnsurePreviewRows()
 
         -- If we /reload while already in a BG, existing plates may not re-fire ADDED.
@@ -3080,15 +4519,29 @@ function BGE:RefreshVisibility()
         -- Leaving PvP: hard clear
         self:StopTargetScanner()
         self:StopLiveBarPoller()
+        self:StopScoreWarmup()
         self:ClearPreviewRows()
         for _, row in ipairs(self.rows) do
             self:ReleaseRow(row)
         end
+        self._seededThisBG = false
+        self._seedCount = 0
+        wipe(self.scoreClassList)
+        wipe(self.roster)
         wipe(self.rowByGuid)
         wipe(self.rowByUnit)
+        wipe(self.rowByName)
+        wipe(self.nameCounts)
         self._expectedBGTeamSize = nil
         self._expectedBGTeamSizeGuess = nil
+        self._latchedBGWant = nil
+        self._latchedBGKind = nil
         self._enteredBGAt = nil
+        self._seedStartRetries = nil
+        self._seedRetryPending = nil
+        self._teamDidNotFullyEnter = false
+        self._teamDidNotFullyEnterWarned = false
+        self._enteredMidMatch = false
         self.frame:SetAlpha(0)
         if not InLockdown() then
             self.frame:Hide()
@@ -3290,7 +4743,15 @@ CreateMainFrame = function()
     -- Light polling loop: fixes "Enemy forever"/blank forever by retrying until UnitName becomes available.
     f._bgeRetryAccum = 0
     f._bgeBarsAccum = 0
-    f:SetScript("OnUpdate", nil)
+    f:SetScript("OnUpdate", function(_, elapsed)
+        if not _G.RSTATS_BGE then return end
+        -- Critical: never do identity retry polling in combat; it's too expensive in big fights.
+        if InLockdown() then return end
+        f._bgeRetryAccum = (f._bgeRetryAccum or 0) + (elapsed or 0)
+        if f._bgeRetryAccum < 1 then return end
+        f._bgeRetryAccum = 0
+        _G.RSTATS_BGE:RetryMissingIdentities()
+    end)
 
     -- IMPORTANT: Do NOT create an always-on target scan ticker here.
     -- We already start/stop scanning via StartTargetScanner() in RefreshVisibility().
@@ -3325,6 +4786,7 @@ evt:RegisterEvent("PLAYER_DEAD")
 evt:RegisterEvent("PLAYER_ALIVE")
 evt:RegisterEvent("PLAYER_UNGHOST")
 
+evt:RegisterEvent("UPDATE_BATTLEFIELD_SCORE")
 evt:RegisterEvent("ARENA_OPPONENT_UPDATE")
 evt:RegisterEvent("PVP_MATCH_ACTIVE")
 evt:RegisterEvent("PVP_MATCH_COMPLETE")
@@ -3424,8 +4886,25 @@ evt:SetScript("OnEvent", function(_, event, arg1)
             _G.RSTATS_BGE:ApplyAnchors()
             _G.RSTATS_BGE:UpdateRowVisibilities()
         end
+
+        -- Apply deferred macrotext updates after combat (secure attribute).
+        if _G.RSTATS_BGE and _G.RSTATS_BGE.pendingMacroByRow then
+            for row, macro in pairs(_G.RSTATS_BGE.pendingMacroByRow) do
+                if row and macro then
+                    row:SetAttribute("macrotext", macro)
+                end
+                _G.RSTATS_BGE.pendingMacroByRow[row] = nil
+            end
+        end
         return
     end
+
+    if event == "UPDATE_BATTLEFIELD_SCORE" then
+        -- Once Engaged, scoreboard data may be secret; ignore score updates.
+        if BGE._scoreLocked or BGE:IsMatchStarted() then
+            BGE._scoreLocked = true
+            return
+        end
         BGE:ScheduleSeedFromScoreboard()
         return
     end
