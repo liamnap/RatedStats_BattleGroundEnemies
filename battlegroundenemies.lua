@@ -1770,26 +1770,6 @@ function BGE:UpdateRowVisibilities()
             end
         end
     end
-
-    do
-        local visible = 0
-        local identified = 0
-        for i = 1, (self.maxPlates or 40) do
-            local row = self.rows and self.rows[i] or nil
-            if row and not row._preview then
-                if row._seenIdentity then identified = identified + 1 end
-                if row:IsShown() and (row:GetAlpha() or 0) > 0 then
-                    visible = visible + 1
-                end
-            end
-        end
-        DPrint("ROW_VIS",
-            "UpdateRowVisibilities visible=" .. tostring(visible) ..
-            " identified=" .. tostring(identified) ..
-                        " matchStarted=" .. Bool01(self._matchStarted) ..
-            " oor=" .. Bool01(self._oorEnabled) ..
-        )
-    end
 end
 
 function BGE:GetRowForUnit(unit)
@@ -1802,7 +1782,6 @@ function BGE:GetRowForUnit(unit)
     if not idx or idx > self.maxPlates then return nil end
     return self.rows[idx]
 end
-
 function BGE:ReleaseRow(row)
     if not row then return end
 
