@@ -628,6 +628,49 @@ local function SafeUnitPower(unit)
     return cur, maxv, r, g, b
 end
 
+UpdateNameClipToHPFill = function(row)
+    if not row or not row.hp or not row.nameText then return end
+
+    local function SafeNumber(v)
+        if type(v) ~= "number" then return nil end
+        if issecretvalue and issecretvalue(v) then return nil end
+        return v
+    end
+
+    local tex = row.hp.GetStatusBarTexture and row.hp:GetStatusBarTexture() or nil
+
+    local hpLeft
+    if row.hp.GetLeft then
+        local ok, v = pcall(row.hp.GetLeft, row.hp)
+        if ok then hpLeft = SafeNumber(v) end
+    end
+
+    local fillRight
+    if tex and tex.GetRight then
+        local ok, v = pcall(tex.GetRight, tex)
+        if ok then fillRight = SafeNumber(v) end
+    end
+
+    if not hpLeft or not fillRight then
+        local w = row.hp.GetWidth and row.hp:GetWidth() or 0
+        if type(w) == "number" and w > 0 then
+            row.nameText:SetWidth(math.max(0, w - 6))
+        end
+        return
+    end
+
+    local okW, fillW = pcall(function() return fillRight - hpLeft end)
+    if not okW or type(fillW) ~= "number" or (issecretvalue and issecretvalue(fillW)) then
+        local w = row.hp.GetWidth and row.hp:GetWidth() or 0
+        if type(w) == "number" and w > 0 then
+            row.nameText:SetWidth(math.max(0, w - 6))
+        end
+        return
+    end
+
+    row.nameText:SetWidth(math.max(0, fillW - 6))
+end
+
 local function GetClassRGB(classFile)
     if not classFile then return 0, 0, 0 end
 
@@ -668,6 +711,7 @@ local function GetPlayerDB()
     db.settings = db.settings or {}
     return db
 end
+
 
 local BGE_PROFILE_SUFFIX = {
     bgePreview       = "Preview",
@@ -1781,6 +1825,8 @@ function BGE:UpdateRowVisibilities()
             end
         end
     end
+
+    -- no debug spam in clean build
 end
 
 function BGE:GetRowForUnit(unit)
@@ -1793,6 +1839,7 @@ function BGE:GetRowForUnit(unit)
     if not idx or idx > self.maxPlates then return nil end
     return self.rows[idx]
 end
+
 function BGE:ReleaseRow(row)
     if not row then return end
 
