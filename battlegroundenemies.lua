@@ -3425,9 +3425,6 @@ evt:SetScript("OnEvent", function(_, event, arg1)
             _G.RSTATS_BGE:UpdateRowVisibilities()
         end
         return
-    else
-        BGE:ScheduleSeedFromScoreboard()
-        return
     end
 
     if event == "ARENA_OPPONENT_UPDATE" then
