@@ -1232,6 +1232,12 @@ function BGE:BuildRosterFromScoreboard()
             if oa ~= ob then return oa < ob end
             return (a.fullName or "") < (b.fullName or "")
         end)
+        if #self.roster == 0 then
+            DPrintMissing("BUILD_ZERO", "BuildRoster zero n=" .. tostring(n) .. 
+                " myFI=" .. tostring(NormalizeFactionIndex(myFactionIndex) or "nil") .. 
+                " row1FI=" .. tostring((function() local ok, info = pcall(_G.C_PvP.GetScoreInfo, 1); return ok and type(info) == "table" and (NormalizeFactionIndex(info.faction) or "nil") or "nil" end)()) .. 
+                " row1Name=" .. tostring((function() local ok, info = pcall(_G.C_PvP.GetScoreInfo, 1); return ok and type(info) == "table" and (SafeNonEmptyString(info.name) or "nil") or "nil" end)())) 
+        end
         return
     end
 
