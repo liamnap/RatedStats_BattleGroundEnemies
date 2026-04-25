@@ -3425,7 +3425,7 @@ evt:SetScript("OnEvent", function(_, event, arg1)
             _G.RSTATS_BGE:UpdateRowVisibilities()
         end
         return
-    end
+    else
         BGE:ScheduleSeedFromScoreboard()
         return
     end
