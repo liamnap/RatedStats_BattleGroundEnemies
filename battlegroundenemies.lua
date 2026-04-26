@@ -12,6 +12,7 @@ _G.RSTATS_BGE = BGE
 BGE.rows = {}
 BGE.previewRows = {}
 BGE.maxPlates = 40
+BGE.expectedRows = 10
 
 BGE.rowByUnit = {}
 BGE.rowByGuid = {}
@@ -39,6 +40,7 @@ local RS_TEXT_R, RS_TEXT_G, RS_TEXT_B = 182/255, 158/255, 134/255
 local ROW_ALPHA_ACTIVE   = 1.0
 local ROW_ALPHA_OOR      = 0.55
 local ROW_ALPHA_DEAD     = 0.50
+local ROW_ALPHA_UNKNOWN  = 0.35
 local CLASS_ALPHA_ACTIVE = 1.00
 local CLASS_ALPHA_OOR    = 0.55
 local CLASS_ALPHA_DEAD   = 0.50
@@ -779,9 +781,10 @@ local function MakeRow(parent, index)
     row:EnableMouse(true)
     row:RegisterForClicks(GetCVarBool("ActionButtonUseKeyDown") and "AnyDown" or "AnyUp")
     row:SetAttribute("type1", "target")
-    row:SetAttribute("unit", NameplateUnitFromIndex(index))
-    row.plateIndex = index
-    row.unit = NameplateUnitFromIndex(index)
+    row:SetAttribute("unit", nil)
+    row.plateIndex = nil
+    row.unit = nil
+    row._secureUnit = nil
 
     row:SetScript("PostClick", function(self)
         local bge = _G.RSTATS_BGE
@@ -968,6 +971,95 @@ function BGE:EnsureSecureRows()
     end
 end
 
+function BGE:ResolveExpectedRows()
+    local prefix, count = ResolveLiveProfilePrefix()
+    self._profilePrefix = prefix
+
+    count = tonumber(SafeToString(count)) or 10
+    if count < 1 then count = 10 end
+    if count > self.maxPlates then count = self.maxPlates end
+
+    self.expectedRows = count
+    return count
+end
+
+function BGE:GetLayoutRowCount()
+    if IsInPVPInstance() then
+        return self:ResolveExpectedRows()
+    end
+
+    if GetSetting("bgePreview", false) then
+        local want = GetSetting("bgePreviewCount", 8)
+        want = tonumber(SafeToString(want)) or 8
+        if want < 1 then want = 1 end
+        if want > self.maxPlates then want = self.maxPlates end
+        return want
+    end
+
+    return self.expectedRows or 10
+end
+
+function BGE:PrimeRosterSlots()
+    if not self.frame or not IsInPVPInstance() then return end
+
+    self:EnsureSecureRows()
+
+    local want = self:ResolveExpectedRows()
+    for i = 1, self.maxPlates do
+        local row = self.rows[i]
+        if row then
+            if i <= want then
+                if not row._seenIdentity then
+                    row._placeholder = true
+                    row._outOfRange = false
+                    row._preview = false
+                    row.nameText:SetText("Enemy " .. tostring(i))
+                    row.hpText:SetText("")
+                    row.specText:SetText("")
+                    row.roleIcon:Hide()
+                    row.icon:Hide()
+                    row.iconHit:Hide()
+                    row.hp:SetMinMaxValues(0, 1)
+                    row.hp:SetValue(0)
+                    row.hp:SetStatusBarColor(0.25, 0.25, 0.25, CLASS_ALPHA_OOR)
+                    row.power:SetMinMaxValues(0, 1)
+                    row.power:SetValue(0)
+                    row.power:Hide()
+                    row.bg:SetColorTexture(0, 0, 0, 0.25)
+                end
+            elseif not row._seenIdentity then
+                row._placeholder = false
+                row:SetAlpha(0)
+            end
+        end
+    end
+end
+
+function BGE:GetRowForPlateUnit(unit)
+    if not unit or not SafeUnitExists(unit) or not SafeUnitIsEnemy(unit) then return nil end
+
+    local guid = SafeUnitGUID(unit)
+    if guid and self.rowByGuid[guid] then return self.rowByGuid[guid] end
+
+    local display, base = GetNameplateDisplayNames(unit)
+    local full, unitBase = SafeUnitFullName(unit)
+    base = base or unitBase
+
+    if full and self.rowByDisplayName[full] then return self.rowByDisplayName[full] end
+    if display and self.rowByDisplayName[display] then return self.rowByDisplayName[display] end
+    if base and self.rowByBaseName[base] then return self.rowByBaseName[base] end
+
+    local want = self:ResolveExpectedRows()
+    for i = 1, want do
+        local row = self.rows[i]
+        if row and not row._seenIdentity then
+            return row
+        end
+    end
+
+    return nil
+end
+
 function BGE:ReleaseRow(row, keepSeen)
     if not row then return end
 
@@ -987,8 +1079,15 @@ function BGE:ReleaseRow(row, keepSeen)
     row.achievText = nil
     row.achievTint = nil
     row._seenIdentity = keepSeen and row._seenIdentity or false
+    row._placeholder = false
     row._outOfRange = false
     row._preview = false
+    row.unit = nil
+    row.plateIndex = nil
+    if not InLockdown() then
+        row:SetAttribute("unit", nil)
+        row._secureUnit = nil
+    end
     row._hpSB = nil
     row._pwrSB = nil
     row._barsUnit = nil
@@ -1311,12 +1410,27 @@ function BGE:HandlePlateAdded(unit)
 
     local idx = NameplateIndex(unit)
     if not idx or idx > self.maxPlates then return end
-    local row = self.rows[idx]
-    if not row then return end
+
+    local row = self:GetRowForPlateUnit(unit)
+    if not row then
+        DPrint("PLATE_NO_SLOT:" .. unit, "no roster slot available for " .. unit)
+        return
+    end
+
+    local old = self.rowByUnit[unit]
+    if old and old ~= row then
+        old.unit = nil
+        old.plateIndex = nil
+        old._outOfRange = old._seenIdentity and true or false
+        old._hpSB = nil
+        old._pwrSB = nil
+        old._barsUnit = nil
+    end
 
     self.rowByUnit[unit] = row
     row.unit = unit
     row.plateIndex = idx
+    row._placeholder = false
     row._outOfRange = false
     row._preview = false
     row._hpSB = nil
@@ -1340,6 +1454,10 @@ function BGE:HandlePlateRemoved(unit)
     if not row then return end
 
     self.rowByUnit[unit] = nil
+    if row.unit == unit then
+        row.unit = nil
+        row.plateIndex = nil
+    end
     row._hpSB = nil
     row._pwrSB = nil
     row._barsUnit = nil
@@ -1419,6 +1537,7 @@ function BGE:ScanNameplates()
     if not IsInPVPInstance() then return end
 
     self:EnsureSecureRows()
+    self:PrimeRosterSlots()
 
     for i = 1, self.maxPlates do
         local unit = NameplateUnitFromIndex(i)
@@ -1495,10 +1614,14 @@ function BGE:UpdateRowVisibilities()
         playerDead = ok and SafeBool(dead)
     end
 
+    local wantedRows = self:GetLayoutRowCount()
+
     for i = 1, self.maxPlates do
         local row = self.rows[i]
         if row then
-            if row._preview then
+            if i > wantedRows and not row._preview then
+                row:SetAlpha(0)
+            elseif row._preview then
                 row._outOfRange = false
                 ApplyClassAlpha(row, CLASS_ALPHA_ACTIVE)
                 row:SetAlpha(ROW_ALPHA_ACTIVE)
@@ -1529,7 +1652,11 @@ function BGE:UpdateRowVisibilities()
                     row:SetAlpha(ROW_ALPHA_OOR)
                 end
             else
-                row:SetAlpha(0)
+                if IsInPVPInstance() and i <= wantedRows then
+                    row:SetAlpha(ROW_ALPHA_UNKNOWN)
+                else
+                    row:SetAlpha(0)
+                end
             end
         end
     end
@@ -1777,20 +1904,25 @@ function BGE:ApplyAnchors()
     if type(colGap) ~= "number" then colGap = 6 end
     if type(w) ~= "number" or w < 50 then w = 240 end
 
+    local layoutRows = self:GetLayoutRowCount()
+
     for i = 1, self.maxPlates do
         local row = self.rows[i]
         if row then
-            local col = math.floor((i - 1) / rowsPerCol)
-            local rix = (i - 1) % rowsPerCol
             row:ClearAllPoints()
-            row:SetPoint("TOPLEFT", self.frame, "TOPLEFT", col * (w + colGap), -(rix * (h + gap)))
-            self:ApplyRowLayout(row)
+            if i <= layoutRows then
+                local col = math.floor((i - 1) / rowsPerCol)
+                local rix = (i - 1) % rowsPerCol
+                row:SetPoint("TOPLEFT", self.frame, "TOPLEFT", col * (w + colGap), -(rix * (h + gap)))
+                self:ApplyRowLayout(row)
+            end
         end
     end
 
-    local usedCols = math.min(cols, math.max(1, math.ceil(self.maxPlates / rowsPerCol)))
+    local usedCols = math.min(cols, math.max(1, math.ceil(layoutRows / rowsPerCol)))
+    local rowsInTallestCol = math.min(rowsPerCol, math.max(1, layoutRows))
     local totalW = (usedCols * w) + ((usedCols - 1) * colGap)
-    local totalH = (rowsPerCol * (h + gap)) - gap
+    local totalH = (rowsInTallestCol * (h + gap)) - gap
     if totalH < h then totalH = h end
     self.frame:SetSize(totalW, totalH)
 end
@@ -1826,6 +1958,9 @@ function BGE:RefreshVisibility()
         end
         self.frame:SetAlpha(1)
         self:EnsureSecureRows()
+        if inPvp then
+            self:PrimeRosterSlots()
+        end
         self:UpdateFrameTeamTint()
 
         if inPvp then
@@ -2044,12 +2179,14 @@ evt:SetScript("OnEvent", function(_, event, arg1)
             BGE:ApplyAnchors()
             BGE:UpdateRowVisibilities()
         end
+        BGE:PrimeRosterSlots()
         BGE:ScanNameplates()
         return
     end
 
     if event == "PVP_MATCH_ACTIVE" or event == "PVP_MATCH_COMPLETE" then
         BGE:UpdateMatchState()
+        BGE:PrimeRosterSlots()
         BGE:ScanNameplates()
         BGE:UpdateRowVisibilities()
         return
