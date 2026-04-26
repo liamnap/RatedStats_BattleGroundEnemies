@@ -2,11 +2,11 @@ local addonName, RSTATS = ...
 RSTATS = RSTATS or _G.RSTATS
 
 -- Rated Stats - Battleground Enemies
--- 12.0.5 nameplate-only rebuild.
--- No scoreboard seeding, no GetBattlefieldScore, no C_PvP.GetScoreInfo.
--- Stable roster slots are filled from exposed enemy nameplate units.
--- Name/spec/role are not taken from secret scoreboard fields or enemy inspection.
--- Live rows use exposed nameplate display names, class colour, health, power, OOR, dead state, and achievements when a non-secret name key is available.
+-- 12.0.5 scoreboard-roster + nameplate-live rebuild.
+-- Scoreboard is used only to seed enemy roster rows: name, class, faction, race, and best-effort role/spec display.
+-- Nameplates are used for live binding, health, power, OOR, DEAD state, and class/name fallback.
+-- No enemy inspect path. No scoreboard-driven health/power. No role/spec sorting dependency.
+-- Secret display values may be passed directly to FontStrings, but are not split, compared, or used as table keys.
 
 local BGE = {}
 _G.RSTATS_BGE = BGE
@@ -20,6 +20,11 @@ BGE.rowByUnit = {}
 BGE.rowByGuid = {}
 BGE.rowByDisplayName = {}
 BGE.rowByBaseName = {}
+BGE._scoreboardSeeded = false
+BGE._scoreboardEnemyCount = nil
+BGE._scoreboardSort = nil
+BGE._scoreboardFaction = nil
+BGE._scoreboardReasserting = false
 BGE._dbgLast = {}
 BGE._enteredBGAt = nil
 BGE._oorEnabled = false
@@ -160,16 +165,14 @@ local function SafeUnitIsEnemy(unit)
 end
 
 local function SafeUnitIsPlayer(unit)
-    if not SafeUnitExists(unit) or not _G.UnitIsPlayer then return false end
+    if not SafeUnitExists(unit) then return false end
+    if not _G.UnitIsPlayer then return false end
     local ok, isPlayer = pcall(_G.UnitIsPlayer, unit)
-    if not ok then return false end
-    if IsSecretValue(isPlayer) then return false end
-    return isPlayer == true
+    return ok and SafeBool(isPlayer)
 end
 
 local function SafeUnitIsEnemyPlayer(unit)
-    if not SafeUnitIsEnemy(unit) then return false end
-    return SafeUnitIsPlayer(unit)
+    return SafeUnitIsEnemy(unit) and SafeUnitIsPlayer(unit)
 end
 
 local function SafeUnitIsDead(unit)
@@ -308,6 +311,13 @@ local function SafeUnitClass(unit)
     end
 
     return nil, nil, nil
+end
+
+local function SafeUnitRace(unit)
+    if not unit or not _G.UnitRace then return nil, nil end
+    local ok, localized, raceFile = pcall(_G.UnitRace, unit)
+    if not ok then return nil, nil end
+    return SafeNonEmptyString(localized), SafeNonEmptyString(raceFile)
 end
 
 local function NormalizeFactionIndex(v)
@@ -544,7 +554,31 @@ local function NormalizeRole(role)
     local s = SafeNonEmptyString(role)
     if not s then return nil end
     s = s:upper()
-    if s == "TANK" or s == "HEALER" or s == "DAMAGER" then return s end
+    if s == "TANK" or s == "HEALER" or s == "DAMAGER" or s == "DAMAGE" then
+        return s == "DAMAGE" and "DAMAGER" or s
+    end
+    return nil
+end
+
+local function ScoreboardRoleToRole(roleAssigned)
+    if type(roleAssigned) == "nil" or IsSecretValue(roleAssigned) then return nil end
+
+    local direct = NormalizeRole(roleAssigned)
+    if direct then return direct end
+
+    local n
+    if type(roleAssigned) == "number" then
+        n = roleAssigned
+    else
+        local s = SafeToString(roleAssigned)
+        n = s and tonumber(s) or nil
+    end
+
+    -- Blizzard PVPMatchTable.lua explicitly checks 4 as LFG_ROLE_FLAG_HEALER.
+    -- Standard LFG role flags are 2=TANK, 4=HEALER, 8=DAMAGE.
+    if n == 2 then return "TANK" end
+    if n == 4 then return "HEALER" end
+    if n == 8 then return "DAMAGER" end
     return nil
 end
 
@@ -566,6 +600,23 @@ local function SetRoleTexture(tex, role)
             end
         end
     end
+
+    local coords = nil
+    if role == "TANK" then
+        coords = { 0, 19 / 64, 22 / 64, 41 / 64 }
+    elseif role == "HEALER" then
+        coords = { 20 / 64, 39 / 64, 1 / 64, 20 / 64 }
+    elseif role == "DAMAGER" then
+        coords = { 20 / 64, 39 / 64, 22 / 64, 41 / 64 }
+    end
+
+    if coords then
+        tex:SetTexture("Interface\\LFGFrame\\UI-LFG-ICON-PORTRAITROLES")
+        tex:SetTexCoord(coords[1], coords[2], coords[3], coords[4])
+        tex:Show()
+        return true
+    end
+
     tex:Hide()
     return false
 end
@@ -985,6 +1036,7 @@ local function MakeRow(parent, index)
     row.fullName = nil
     row.displayName = nil
     row.displayText = nil
+    row.raceName = nil
     row.classFile = nil
     row.role = nil
     row.specID = nil
@@ -998,7 +1050,6 @@ local function MakeRow(parent, index)
     row._hpSB = nil
     row._pwrSB = nil
     row._barsUnit = nil
-    row._hasLiveHP = false
 
     row:HookScript("OnEnter", function()
         local bge = _G.RSTATS_BGE
@@ -1086,7 +1137,13 @@ end
 
 function BGE:GetLayoutRowCount()
     if IsInPVPInstance() then
-        return self:ResolveExpectedRows()
+        local want = self:ResolveExpectedRows()
+        local scoreCount = tonumber(self._scoreboardEnemyCount) or 0
+        if scoreCount > want then want = scoreCount end
+        if want < 1 then want = 1 end
+        if want > self.maxPlates then want = self.maxPlates end
+        self.expectedRows = want
+        return want
     end
 
     if GetSetting("bgePreview", false) then
@@ -1105,7 +1162,7 @@ function BGE:PrimeRosterSlots()
 
     self:EnsureSecureRows()
 
-    local want = self:ResolveExpectedRows()
+    local want = self:GetLayoutRowCount()
     for i = 1, self.maxPlates do
         local row = self.rows[i]
         if row then
@@ -1136,6 +1193,203 @@ function BGE:PrimeRosterSlots()
     end
 end
 
+function BGE:RequestScoreboardData()
+    if _G.RequestBattlefieldScoreData then
+        pcall(_G.RequestBattlefieldScoreData)
+    end
+end
+
+function BGE:EnsureScoreboardFeed()
+    if self._scoreboardReasserting then return false end
+
+    local scoreboardShown = false
+    if _G.PVPMatchScoreboard and _G.PVPMatchScoreboard.IsShown then
+        local ok, shown = pcall(_G.PVPMatchScoreboard.IsShown, _G.PVPMatchScoreboard)
+        scoreboardShown = ok and SafeBool(shown) or false
+    end
+    if (not scoreboardShown) and _G.PVPMatchResults and _G.PVPMatchResults.IsShown then
+        local ok, shown = pcall(_G.PVPMatchResults.IsShown, _G.PVPMatchResults)
+        scoreboardShown = ok and SafeBool(shown) or false
+    end
+
+    if scoreboardShown then return false end
+
+    if _G.SortBattlefieldScoreData and self._scoreboardSort ~= "class" then
+        self._scoreboardReasserting = true
+        local ok = pcall(_G.SortBattlefieldScoreData, "class")
+        self._scoreboardReasserting = false
+        if ok then
+            self._scoreboardSort = "class"
+            return true
+        end
+    end
+
+    if _G.SetBattlefieldScoreFaction and self._scoreboardFaction ~= -1 then
+        self._scoreboardReasserting = true
+        local ok = pcall(_G.SetBattlefieldScoreFaction, -1)
+        self._scoreboardReasserting = false
+        if ok then
+            self._scoreboardFaction = -1
+            return true
+        end
+    end
+
+    return false
+end
+
+function BGE:ApplyScoreboardRosterRow(row, info, rowIndex)
+    if not row or type(info) ~= "table" then return end
+
+    local rawName = info.name
+    local displayText = DisplayNameFromRawName(rawName)
+    local keyFull, keyBase = SafeNameKeysFromRaw(rawName)
+    local classToken = SafeNonEmptyString(info.classToken)
+    local raceName = SafeNonEmptyString(info.raceName)
+    local role = ScoreboardRoleToRole(info.roleAssigned)
+    local specName = nil
+
+    if type(info.talentSpec) ~= "nil" then
+        if IsSecretValue(info.talentSpec) then
+            specName = info.talentSpec
+        else
+            specName = SafeNonEmptyString(info.talentSpec)
+        end
+    end
+
+    if row.unit then
+        local activeClass = select(2, SafeUnitClass(row.unit))
+        if activeClass and classToken and activeClass ~= classToken then
+            if self.rowByUnit[row.unit] == row then self.rowByUnit[row.unit] = nil end
+            if not InLockdown() then
+                row:SetAttribute("unit", nil)
+                row._secureUnit = nil
+            end
+            row.unit = nil
+            row.plateIndex = nil
+            row._hpSB = nil
+            row._pwrSB = nil
+            row._barsUnit = nil
+        end
+    end
+
+    if keyFull then row.displayName = keyFull end
+    if keyFull then row.fullName = keyFull end
+    if keyBase then row.name = keyBase end
+    if type(displayText) ~= "nil" then row.displayText = displayText end
+    if classToken then row.classFile = classToken end
+    if raceName then row.raceName = raceName end
+    row.role = role
+    row.specName = specName
+
+    row._scoreboardSeen = true
+    row._seenIdentity = true
+    row._placeholder = false
+    row._preview = false
+    row._outOfRange = false
+
+    if type(row.displayText) ~= "nil" then
+        row.nameText:SetText(row.displayText)
+    elseif row.name then
+        row.nameText:SetText(row.name)
+    elseif row.displayName then
+        row.nameText:SetText(row.displayName)
+    else
+        row.nameText:SetText("Enemy " .. tostring(rowIndex or row.index or ""))
+    end
+
+    if type(specName) ~= "nil" then
+        row.specText:SetText(specName)
+    else
+        row.specText:SetText("")
+    end
+
+    if row.role then
+        SetRoleTexture(row.roleIcon, row.role)
+    else
+        row.roleIcon:Hide()
+    end
+
+    row.bg:SetColorTexture(0, 0, 0, 0.35)
+    if row.classFile then
+        row.hp:SetMinMaxValues(0, 1)
+        if not row._hasLiveHP then row.hp:SetValue(1) end
+        ApplyClassAlpha(row, CLASS_ALPHA_ACTIVE)
+    end
+
+    local hadIcon = row.achievIconTex
+    if (keyFull or keyBase) and row.achievIconTex == nil then
+        row.achievIconTex, row.achievText, row.achievTint = GetIconTextureForEnemyName(row.fullName or row.displayName, row.name)
+    end
+    if row.achievIconTex then
+        row.icon:SetTexture(row.achievIconTex)
+        if type(row.achievTint) == "table" then
+            row.icon:SetVertexColor(tonumber(row.achievTint[1]) or 1, tonumber(row.achievTint[2]) or 1, tonumber(row.achievTint[3]) or 1)
+        else
+            row.icon:SetVertexColor(1, 1, 1)
+        end
+        row.icon:Show()
+        row.iconHit:Show()
+    else
+        row.icon:Hide()
+        row.iconHit:Hide()
+    end
+    if row.achievIconTex ~= hadIcon then UpdateNameClipToHPFill(row) end
+
+    self:MarkRowMappings(row)
+    row:SetAlpha(ROW_ALPHA_ACTIVE)
+    self:ApplyRowLayout(row)
+end
+
+function BGE:SeedRosterFromScoreboard()
+    if not GetSetting("bgeEnabled", true) then return end
+    if not IsInPVPInstance() then return end
+    if not (_G.C_PvP and _G.C_PvP.GetScoreInfo and _G.GetNumBattlefieldScores) then return end
+    if self._scoreboardReasserting then return end
+
+    self:EnsureSecureRows()
+    self:RequestScoreboardData()
+    if self:EnsureScoreboardFeed() then return end
+
+    local enemyFaction = GetEnemyFactionIndex()
+    if enemyFaction == nil then return end
+
+    local okCount, count = pcall(_G.GetNumBattlefieldScores)
+    count = okCount and tonumber(SafeToString(count)) or 0
+    if count <= 0 then return end
+
+    local enemies = {}
+    for i = 1, count do
+        local okInfo, info = pcall(_G.C_PvP.GetScoreInfo, i)
+        if okInfo and type(info) == "table" then
+            local faction = NormalizeFactionIndex(info.faction)
+            local classToken = SafeNonEmptyString(info.classToken)
+            if faction == enemyFaction and classToken and type(info.name) ~= "nil" then
+                enemies[#enemies + 1] = info
+            end
+        end
+    end
+
+    local enemyCount = #enemies
+    if enemyCount <= 0 then return end
+    if enemyCount > self.maxPlates then enemyCount = self.maxPlates end
+    self._scoreboardEnemyCount = enemyCount
+    self.expectedRows = math.max(self.expectedRows or 0, enemyCount)
+
+    self:PrimeRosterSlots()
+
+    for i = 1, enemyCount do
+        local row = self.rows[i]
+        if row then
+            self:ApplyScoreboardRosterRow(row, enemies[i], i)
+        end
+    end
+
+    self._scoreboardSeeded = true
+    DPrint("SCOREBOARD_SEED", "seeded " .. tostring(enemyCount) .. " enemy rows from scoreboard")
+    self:UpdateRowVisibilities()
+end
+
+
 function BGE:GetRowForPlateUnit(unit)
     if not unit or not SafeUnitExists(unit) or not SafeUnitIsEnemyPlayer(unit) then return nil end
 
@@ -1153,7 +1407,23 @@ function BGE:GetRowForPlateUnit(unit)
     if keyFull and self.rowByDisplayName[keyFull] then return self.rowByDisplayName[keyFull] end
     if keyBase and self.rowByBaseName[keyBase] then return self.rowByBaseName[keyBase] end
 
-    local want = self:ResolveExpectedRows()
+    local _, classFile = SafeUnitClass(unit)
+    local raceName = SafeUnitRace(unit)
+    local want = self:GetLayoutRowCount()
+
+    -- Scoreboard rows already know the roster. Attach live nameplates to those rows first.
+    -- Race is used when available; otherwise take the first unbound same-class row, matching BGEFixed's practical fallback.
+    if classFile then
+        for i = 1, want do
+            local row = self.rows[i]
+            if row and row._scoreboardSeen and not row.unit and row.classFile == classFile then
+                if not row.raceName or not raceName or row.raceName == raceName then
+                    return row
+                end
+            end
+        end
+    end
+
     for i = 1, want do
         local row = self.rows[i]
         if row and not row.unit and not row._seenIdentity and not row._seenPlate then
@@ -1183,6 +1453,7 @@ function BGE:ReleaseRow(row, keepSeen)
     row.fullName = nil
     row.displayName = nil
     row.displayText = nil
+    row.raceName = nil
     row.classFile = nil
     row.role = nil
     row.specID = nil
@@ -1190,6 +1461,7 @@ function BGE:ReleaseRow(row, keepSeen)
     row.achievIconTex = nil
     row.achievText = nil
     row.achievTint = nil
+    row._scoreboardSeen = keepSeen and row._scoreboardSeen or false
     row._seenIdentity = keepSeen and row._seenIdentity or false
     row._seenPlate = keepSeen and row._seenPlate or false
     row._placeholder = false
@@ -1204,7 +1476,6 @@ function BGE:ReleaseRow(row, keepSeen)
     row._hpSB = nil
     row._pwrSB = nil
     row._barsUnit = nil
-    row._hasLiveHP = false
 
     row.nameText:SetText("")
     row.hpText:SetText("")
@@ -1226,6 +1497,8 @@ function BGE:ReleaseRow(row, keepSeen)
 end
 
 function BGE:ClearAllRows()
+    self._scoreboardSeeded = false
+    self._scoreboardEnemyCount = nil
     wipe(self.rowByUnit)
     wipe(self.rowByGuid)
     wipe(self.rowByDisplayName)
@@ -1290,7 +1563,6 @@ function BGE:UpdateIdentity(row, unit)
     if classFile then row.classFile = classFile end
 
     local hasKeyIdentity = guid or keyFull or keyBase
-    local hasDisplayIdentity = type(row.displayText) ~= "nil" or hasKeyIdentity
 
     if type(row.displayText) ~= "nil" then
         -- Secret names can be displayed, but not safely split, compared, or used as table keys.
@@ -1309,22 +1581,23 @@ function BGE:UpdateIdentity(row, unit)
     end
 
     row._seenPlate = true
-    if hasKeyIdentity then
+    if hasKeyIdentity or row._scoreboardSeen then
         row._seenIdentity = true
     end
     row._preview = false
     row.bg:SetColorTexture(0, 0, 0, 0.35)
     ApplyClassAlpha(row, row._outOfRange and CLASS_ALPHA_OOR or CLASS_ALPHA_ACTIVE)
-    if row.classFile and not row._hasLiveHP and not row._dead then
-        row.hp:SetMinMaxValues(0, 1)
-        row.hp:SetValue(1)
-    end
 
-    row.role = nil
-    row.specID = nil
-    row.specName = nil
-    row.roleIcon:Hide()
-    row.specText:SetText("")
+    if row.role then
+        SetRoleTexture(row.roleIcon, row.role)
+    else
+        row.roleIcon:Hide()
+    end
+    if type(row.specName) ~= "nil" then
+        row.specText:SetText(row.specName)
+    else
+        row.specText:SetText("")
+    end
 
     local hadIcon = row.achievIconTex
     if hasKeyIdentity and row.achievIconTex == nil then
@@ -1358,7 +1631,6 @@ function BGE:UpdateHealth(row, unit)
         row.hp:SetValue(0)
         row.hpText:SetText("DEAD")
         row._dead = true
-        row._hasLiveHP = true
         UpdateNameClipToHPFill(row)
         return
     end
@@ -1380,13 +1652,8 @@ function BGE:UpdateHealth(row, unit)
 
     local cur, maxv = SafeStatusBarValues(sb)
     if cur and maxv then
-        row._hasLiveHP = true
         pcall(row.hp.SetMinMaxValues, row.hp, 0, maxv)
         pcall(row.hp.SetValue, row.hp, cur)
-    elseif row.classFile and not row._dead then
-        row._hasLiveHP = false
-        row.hp:SetMinMaxValues(0, 1)
-        row.hp:SetValue(1)
     end
 
     local txt = nil
@@ -1495,11 +1762,10 @@ function BGE:HandlePlateAdded(unit)
 
     local row = self:GetRowForPlateUnit(unit)
     if not row then
-        DPrint("PLATE_NO_SLOT:" .. unit, "no roster slot available for " .. unit)
+        DPrint("PLATE_NO_SLOT", "no roster slot available for " .. unit)
         return
     end
 
-    local sameExisting = self.rowByUnit[unit] == row
     local old = self.rowByUnit[unit]
     if old and old ~= row then
         old.unit = nil
@@ -1525,9 +1791,7 @@ function BGE:HandlePlateAdded(unit)
     self:UpdatePower(row, unit)
     ApplyClassAlpha(row, CLASS_ALPHA_ACTIVE)
 
-    if not sameExisting then
-        DPrint("PLATE_ADD:" .. unit, "bound enemy " .. unit .. " keyedName=" .. tostring(row.name or row.displayName or "nil") .. " display=" .. (type(row.displayText) ~= "nil" and "yes" or "no") .. " class=" .. tostring(row.classFile or "nil"))
-    end
+    DPrint("PLATE_ADD:" .. unit, "bound enemy " .. unit .. " keyedName=" .. tostring(row.name or row.displayName or "nil") .. " display=" .. (type(row.displayText) ~= "nil" and "yes" or "no") .. " class=" .. tostring(row.classFile or "nil"))
 
     self:UpdateRowVisibilities()
     self:SyncSelectedRowToTarget()
@@ -1554,19 +1818,30 @@ function BGE:HandlePlateRemoved(unit)
     else
         row._seenPlate = false
         row._outOfRange = false
-        row._placeholder = true
-        row.displayText = nil
-        row.classFile = nil
-        row._hasLiveHP = false
-        row.nameText:SetText("Enemy " .. tostring(row.index or ""))
-        row.hpText:SetText("")
-        row.hp:SetMinMaxValues(0, 1)
-        row.hp:SetValue(0)
-        row.hp:SetStatusBarColor(0.25, 0.25, 0.25, CLASS_ALPHA_OOR)
-        row.power:SetMinMaxValues(0, 1)
-        row.power:SetValue(0)
-        row.power:Hide()
-        row:SetAlpha(ROW_ALPHA_UNKNOWN)
+        if row._scoreboardSeen then
+            row._seenIdentity = true
+            row._placeholder = false
+            row.hpText:SetText("")
+            row.hp:SetMinMaxValues(0, 1)
+            row.hp:SetValue(1)
+            ApplyClassAlpha(row, self._oorEnabled and CLASS_ALPHA_OOR or CLASS_ALPHA_ACTIVE)
+            row.power:SetMinMaxValues(0, 1)
+            row.power:SetValue(0)
+            row.power:Hide()
+            row:SetAlpha(self._oorEnabled and ROW_ALPHA_OOR or ROW_ALPHA_ACTIVE)
+        else
+            row._placeholder = true
+            row.classFile = nil
+            row.nameText:SetText("Enemy " .. tostring(row.index or ""))
+            row.hpText:SetText("")
+            row.hp:SetMinMaxValues(0, 1)
+            row.hp:SetValue(0)
+            row.hp:SetStatusBarColor(0.25, 0.25, 0.25, CLASS_ALPHA_OOR)
+            row.power:SetMinMaxValues(0, 1)
+            row.power:SetValue(0)
+            row.power:Hide()
+            row:SetAlpha(ROW_ALPHA_UNKNOWN)
+        end
     end
 
     self:UpdateRowVisibilities()
@@ -1926,7 +2201,7 @@ function BGE:ApplyRowLayout(row)
         row.power:Hide()
     end
 
-    local hasRoleIcon = row.role ~= nil and row._preview == true
+    local hasRoleIcon = row.role ~= nil
     local roleSize = hasRoleIcon and math.floor(math.max(10, math.min(h, 16))) or 0
     if roleSize > 0 then
         roleSize = math.max(10, math.min(roleSize, 96))
@@ -2248,6 +2523,7 @@ evt:RegisterEvent("UNIT_MAXPOWER")
 evt:RegisterEvent("UNIT_DISPLAYPOWER")
 evt:RegisterEvent("PVP_MATCH_ACTIVE")
 evt:RegisterEvent("PVP_MATCH_COMPLETE")
+evt:RegisterEvent("UPDATE_BATTLEFIELD_SCORE")
 pcall(function() evt:RegisterEvent("UNIT_HEALTH_FREQUENT") end)
 pcall(function() evt:RegisterEvent("UNIT_POWER_FREQUENT") end)
 
@@ -2256,6 +2532,8 @@ evt:SetScript("OnEvent", function(_, event, arg1)
         if IsInPVPInstance() or GetSetting("bgePreview", false) then
             CreateMainFrame()
             BGE:ApplySettings()
+            BGE:SeedRosterFromScoreboard()
+            BGE:ScanNameplates()
         end
         return
     end
@@ -2266,6 +2544,8 @@ evt:SetScript("OnEvent", function(_, event, arg1)
             CreateMainFrame()
         end
         BGE:ApplySettings()
+        BGE:SeedRosterFromScoreboard()
+        BGE:ScanNameplates()
         return
     end
 
@@ -2284,6 +2564,7 @@ evt:SetScript("OnEvent", function(_, event, arg1)
             BGE:UpdateRowVisibilities()
         end
         BGE:PrimeRosterSlots()
+        BGE:SeedRosterFromScoreboard()
         BGE:ScanNameplates()
         return
     end
@@ -2291,8 +2572,15 @@ evt:SetScript("OnEvent", function(_, event, arg1)
     if event == "PVP_MATCH_ACTIVE" or event == "PVP_MATCH_COMPLETE" then
         BGE:UpdateMatchState()
         BGE:PrimeRosterSlots()
+        BGE:SeedRosterFromScoreboard()
         BGE:ScanNameplates()
         BGE:UpdateRowVisibilities()
+        return
+    end
+
+    if event == "UPDATE_BATTLEFIELD_SCORE" then
+        BGE:SeedRosterFromScoreboard()
+        BGE:ScanNameplates()
         return
     end
 
