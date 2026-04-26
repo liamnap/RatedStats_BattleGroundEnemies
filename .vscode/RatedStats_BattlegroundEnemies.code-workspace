@@ -73,7 +73,9 @@
 			"SettingsInbound",
 			"PowerBarColor",
 			"RAID_CLASS_COLORS",
-			"GetUnitName"
+			"GetUnitName",
+			"LOCALIZED_CLASS_NAMES_MALE",
+			"LOCALIZED_CLASS_NAMES_FEMALE"
 		],
 		"Lua.type.weakUnionCheck": true
 	}

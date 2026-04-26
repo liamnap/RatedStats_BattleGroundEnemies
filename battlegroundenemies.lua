@@ -174,6 +174,25 @@ local function SafeUnitName(unit)
 end
 
 local function SafeUnitFullName(unit)
+    if not unit then return nil, nil end
+
+    if _G.GetUnitName then
+        local okFull, full = pcall(_G.GetUnitName, unit, true)
+        full = okFull and SafeNonEmptyString(full) or nil
+        if full then
+            local base = full
+            local okBase, b = pcall(function() return full:match("^([^-]+)") end)
+            if okBase and b and b ~= "" then base = b end
+            return full, base
+        end
+
+        local okBaseOnly, baseOnly = pcall(_G.GetUnitName, unit, false)
+        baseOnly = okBaseOnly and SafeNonEmptyString(baseOnly) or nil
+        if baseOnly then
+            return baseOnly, baseOnly
+        end
+    end
+
     local n, r = SafeUnitName(unit)
     if not n then return nil, nil end
     if r then return n .. "-" .. r, n end
@@ -408,6 +427,17 @@ local function GetClassRGB(classFile)
         end
     end
     return 0.10, 0.90, 0.10
+end
+
+local function ClassDisplayName(classFile)
+    if not classFile then return nil end
+    if LOCALIZED_CLASS_NAMES_MALE and LOCALIZED_CLASS_NAMES_MALE[classFile] then
+        return LOCALIZED_CLASS_NAMES_MALE[classFile]
+    end
+    if LOCALIZED_CLASS_NAMES_FEMALE and LOCALIZED_CLASS_NAMES_FEMALE[classFile] then
+        return LOCALIZED_CLASS_NAMES_FEMALE[classFile]
+    end
+    return SafeNonEmptyString(classFile)
 end
 
 local function ApplyClassAlpha(row, a)
@@ -760,6 +790,8 @@ end
 
 local function MakeRow(parent, index)
     local row = CreateFrame("Button", nil, parent, "SecureActionButtonTemplate")
+    row.index = index
+    row._seenPlate = false
     row:SetAlpha(0)
     row:Show()
     row:EnableMouse(true)
@@ -993,7 +1025,7 @@ function BGE:PrimeRosterSlots()
         local row = self.rows[i]
         if row then
             if i <= want then
-                if not row._seenIdentity then
+                if not row._seenIdentity and not row._seenPlate and not row.unit then
                     row._placeholder = true
                     row._outOfRange = false
                     row._preview = false
@@ -1011,7 +1043,7 @@ function BGE:PrimeRosterSlots()
                     row.power:Hide()
                     row.bg:SetColorTexture(0, 0, 0, 0.25)
                 end
-            elseif not row._seenIdentity then
+            elseif not row._seenIdentity and not row._seenPlate and not row.unit then
                 row._placeholder = false
                 row:SetAlpha(0)
             end
@@ -1021,6 +1053,9 @@ end
 
 function BGE:GetRowForPlateUnit(unit)
     if not unit or not SafeUnitExists(unit) or not SafeUnitIsEnemy(unit) then return nil end
+
+    local existing = self.rowByUnit and self.rowByUnit[unit]
+    if existing then return existing end
 
     local guid = SafeUnitGUID(unit)
     if guid and self.rowByGuid[guid] then return self.rowByGuid[guid] end
@@ -1036,7 +1071,14 @@ function BGE:GetRowForPlateUnit(unit)
     local want = self:ResolveExpectedRows()
     for i = 1, want do
         local row = self.rows[i]
-        if row and not row._seenIdentity then
+        if row and not row.unit and not row._seenIdentity and not row._seenPlate then
+            return row
+        end
+    end
+
+    for i = 1, want do
+        local row = self.rows[i]
+        if row and not row.unit and not row._seenIdentity then
             return row
         end
     end
@@ -1063,6 +1105,7 @@ function BGE:ReleaseRow(row, keepSeen)
     row.achievText = nil
     row.achievTint = nil
     row._seenIdentity = keepSeen and row._seenIdentity or false
+    row._seenPlate = keepSeen and row._seenPlate or false
     row._placeholder = false
     row._outOfRange = false
     row._preview = false
@@ -1159,15 +1202,24 @@ function BGE:UpdateIdentity(row, unit)
     if base then row.name = base end
     if classFile then row.classFile = classFile end
 
+    local hasIdentity = guid or display or full or base
     if row.name then
         row.nameText:SetText(row.name)
     elseif row.displayName then
         row.nameText:SetText(row.displayName)
     else
-        row.nameText:SetText("Enemy")
+        local cls = ClassDisplayName(row.classFile)
+        if cls then
+            row.nameText:SetText("Enemy " .. cls)
+        else
+            row.nameText:SetText("Enemy")
+        end
     end
 
-    row._seenIdentity = true
+    row._seenPlate = true
+    if hasIdentity then
+        row._seenIdentity = true
+    end
     row._preview = false
     row.bg:SetColorTexture(0, 0, 0, 0.35)
     ApplyClassAlpha(row, row._outOfRange and CLASS_ALPHA_OOR or CLASS_ALPHA_ACTIVE)
@@ -1179,7 +1231,7 @@ function BGE:UpdateIdentity(row, unit)
     row.specText:SetText("")
 
     local hadIcon = row.achievIconTex
-    if row.achievIconTex == nil then
+    if hasIdentity and row.achievIconTex == nil then
         row.achievIconTex, row.achievText, row.achievTint = GetIconTextureForEnemyName(row.fullName or row.displayName, row.name)
     end
     if row.achievIconTex then
@@ -1194,7 +1246,9 @@ function BGE:UpdateIdentity(row, unit)
         row.icon:Hide()
     end
 
-    self:MarkRowMappings(row)
+    if hasIdentity then
+        self:MarkRowMappings(row)
+    end
 
     if row.achievIconTex and not hadIcon and not InLockdown() then
         self:ApplyRowLayout(row)
@@ -1392,13 +1446,25 @@ function BGE:HandlePlateRemoved(unit)
     row._hpSB = nil
     row._pwrSB = nil
     row._barsUnit = nil
-    row._outOfRange = true
 
     if row._seenIdentity then
+        row._outOfRange = true
         ApplyClassAlpha(row, CLASS_ALPHA_OOR)
         row:SetAlpha(self._oorEnabled and ROW_ALPHA_OOR or ROW_ALPHA_ACTIVE)
     else
-        row:SetAlpha(0)
+        row._seenPlate = false
+        row._outOfRange = false
+        row._placeholder = true
+        row.classFile = nil
+        row.nameText:SetText("Enemy " .. tostring(row.index or ""))
+        row.hpText:SetText("")
+        row.hp:SetMinMaxValues(0, 1)
+        row.hp:SetValue(0)
+        row.hp:SetStatusBarColor(0.25, 0.25, 0.25, CLASS_ALPHA_OOR)
+        row.power:SetMinMaxValues(0, 1)
+        row.power:SetValue(0)
+        row.power:Hide()
+        row:SetAlpha(ROW_ALPHA_UNKNOWN)
     end
 
     self:UpdateRowVisibilities()
@@ -1507,7 +1573,7 @@ function BGE:PollLiveBars()
     if not IsInPVPInstance() then return end
 
     for _, row in ipairs(self.rows or {}) do
-        if row and row._seenIdentity and not row._preview then
+        if row and (row._seenIdentity or row._seenPlate) and not row._preview then
             local unit = row.unit
             if unit and SafeUnitExists(unit) and SafeUnitIsEnemy(unit) then
                 self:UpdateHealth(row, unit)
@@ -1556,7 +1622,7 @@ function BGE:UpdateRowVisibilities()
                 row._outOfRange = false
                 ApplyClassAlpha(row, CLASS_ALPHA_ACTIVE)
                 row:SetAlpha(ROW_ALPHA_ACTIVE)
-            elseif row._seenIdentity then
+            elseif row._seenIdentity or row._seenPlate then
                 local unit = row.unit
                 local active = unit and SafeUnitExists(unit) and SafeUnitIsEnemy(unit)
                 local dead = active and SafeUnitIsDead(unit)
