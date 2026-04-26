@@ -159,6 +159,19 @@ local function SafeUnitIsEnemy(unit)
     return false
 end
 
+local function SafeUnitIsPlayer(unit)
+    if not SafeUnitExists(unit) or not _G.UnitIsPlayer then return false end
+    local ok, isPlayer = pcall(_G.UnitIsPlayer, unit)
+    if not ok then return false end
+    if IsSecretValue(isPlayer) then return false end
+    return isPlayer == true
+end
+
+local function SafeUnitIsEnemyPlayer(unit)
+    if not SafeUnitIsEnemy(unit) then return false end
+    return SafeUnitIsPlayer(unit)
+end
+
 local function SafeUnitIsDead(unit)
     if not SafeUnitExists(unit) then return false end
     if not _G.UnitIsDeadOrGhost then return false end
@@ -985,6 +998,7 @@ local function MakeRow(parent, index)
     row._hpSB = nil
     row._pwrSB = nil
     row._barsUnit = nil
+    row._hasLiveHP = false
 
     row:HookScript("OnEnter", function()
         local bge = _G.RSTATS_BGE
@@ -1123,7 +1137,7 @@ function BGE:PrimeRosterSlots()
 end
 
 function BGE:GetRowForPlateUnit(unit)
-    if not unit or not SafeUnitExists(unit) or not SafeUnitIsEnemy(unit) then return nil end
+    if not unit or not SafeUnitExists(unit) or not SafeUnitIsEnemyPlayer(unit) then return nil end
 
     local existing = self.rowByUnit and self.rowByUnit[unit]
     if existing then return existing end
@@ -1190,6 +1204,7 @@ function BGE:ReleaseRow(row, keepSeen)
     row._hpSB = nil
     row._pwrSB = nil
     row._barsUnit = nil
+    row._hasLiveHP = false
 
     row.nameText:SetText("")
     row.hpText:SetText("")
@@ -1244,7 +1259,7 @@ end
 
 function BGE:UpdateIdentity(row, unit)
     if not row or not unit or not SafeUnitExists(unit) then return end
-    if not SafeUnitIsEnemy(unit) then return end
+    if not SafeUnitIsEnemyPlayer(unit) then return end
 
     local guid = SafeUnitGUID(unit)
     local displayText, keyFull, keyBase = GetNameplateDisplayNames(unit)
@@ -1294,12 +1309,16 @@ function BGE:UpdateIdentity(row, unit)
     end
 
     row._seenPlate = true
-    if hasDisplayIdentity then
+    if hasKeyIdentity then
         row._seenIdentity = true
     end
     row._preview = false
     row.bg:SetColorTexture(0, 0, 0, 0.35)
     ApplyClassAlpha(row, row._outOfRange and CLASS_ALPHA_OOR or CLASS_ALPHA_ACTIVE)
+    if row.classFile and not row._hasLiveHP and not row._dead then
+        row.hp:SetMinMaxValues(0, 1)
+        row.hp:SetValue(1)
+    end
 
     row.role = nil
     row.specID = nil
@@ -1339,6 +1358,7 @@ function BGE:UpdateHealth(row, unit)
         row.hp:SetValue(0)
         row.hpText:SetText("DEAD")
         row._dead = true
+        row._hasLiveHP = true
         UpdateNameClipToHPFill(row)
         return
     end
@@ -1360,8 +1380,13 @@ function BGE:UpdateHealth(row, unit)
 
     local cur, maxv = SafeStatusBarValues(sb)
     if cur and maxv then
+        row._hasLiveHP = true
         pcall(row.hp.SetMinMaxValues, row.hp, 0, maxv)
         pcall(row.hp.SetValue, row.hp, cur)
+    elseif row.classFile and not row._dead then
+        row._hasLiveHP = false
+        row.hp:SetMinMaxValues(0, 1)
+        row.hp:SetValue(1)
     end
 
     local txt = nil
@@ -1424,7 +1449,7 @@ function BGE:UpdatePower(row, unit)
 end
 
 function BGE:GetRowForExternalUnit(unit)
-    if not unit or not SafeUnitExists(unit) or not SafeUnitIsEnemy(unit) then return nil end
+    if not unit or not SafeUnitExists(unit) or not SafeUnitIsEnemyPlayer(unit) then return nil end
 
     for _, row in ipairs(self.rows or {}) do
         if row and row._seenIdentity and row.unit and SafeUnitExists(row.unit) then
@@ -1446,7 +1471,7 @@ end
 function BGE:HandleExternalUnit(unit)
     if not GetSetting("bgeEnabled", true) then return end
     if not IsInPVPInstance() then return end
-    if not SafeUnitExists(unit) or not SafeUnitIsEnemy(unit) then return end
+    if not SafeUnitExists(unit) or not SafeUnitIsEnemyPlayer(unit) then return end
 
     local row = self:GetRowForExternalUnit(unit)
     if not row then return end
@@ -1461,7 +1486,7 @@ function BGE:HandlePlateAdded(unit)
     if not IsNameplateUnit(unit) then return end
     if not GetSetting("bgeEnabled", true) then return end
     if not IsInPVPInstance() then return end
-    if not SafeUnitExists(unit) or not SafeUnitIsEnemy(unit) then return end
+    if not SafeUnitExists(unit) or not SafeUnitIsEnemyPlayer(unit) then return end
 
     self:EnsureSecureRows()
 
@@ -1474,6 +1499,7 @@ function BGE:HandlePlateAdded(unit)
         return
     end
 
+    local sameExisting = self.rowByUnit[unit] == row
     local old = self.rowByUnit[unit]
     if old and old ~= row then
         old.unit = nil
@@ -1499,7 +1525,9 @@ function BGE:HandlePlateAdded(unit)
     self:UpdatePower(row, unit)
     ApplyClassAlpha(row, CLASS_ALPHA_ACTIVE)
 
-    DPrint("PLATE_ADD:" .. unit, "bound enemy " .. unit .. " keyedName=" .. tostring(row.name or row.displayName or "nil") .. " display=" .. (type(row.displayText) ~= "nil" and "yes" or "no") .. " class=" .. tostring(row.classFile or "nil"))
+    if not sameExisting then
+        DPrint("PLATE_ADD:" .. unit, "bound enemy " .. unit .. " keyedName=" .. tostring(row.name or row.displayName or "nil") .. " display=" .. (type(row.displayText) ~= "nil" and "yes" or "no") .. " class=" .. tostring(row.classFile or "nil"))
+    end
 
     self:UpdateRowVisibilities()
     self:SyncSelectedRowToTarget()
@@ -1527,7 +1555,9 @@ function BGE:HandlePlateRemoved(unit)
         row._seenPlate = false
         row._outOfRange = false
         row._placeholder = true
+        row.displayText = nil
         row.classFile = nil
+        row._hasLiveHP = false
         row.nameText:SetText("Enemy " .. tostring(row.index or ""))
         row.hpText:SetText("")
         row.hp:SetMinMaxValues(0, 1)
@@ -1548,7 +1578,7 @@ function BGE:HandleUnitUpdate(unit, what, force)
     if not unit or not SafeUnitExists(unit) then return end
 
     if IsNameplateUnit(unit) then
-        if not SafeUnitIsEnemy(unit) then return end
+        if not SafeUnitIsEnemyPlayer(unit) then return end
         local row = self.rowByUnit[unit]
         if not row then
             self:HandlePlateAdded(unit)
@@ -1611,7 +1641,7 @@ function BGE:ScanNameplates()
     for i = 1, self.maxPlates do
         local unit = NameplateUnitFromIndex(i)
         if SafeUnitExists(unit) then
-            if SafeUnitIsEnemy(unit) then
+            if SafeUnitIsEnemyPlayer(unit) then
                 self:HandlePlateAdded(unit)
             else
                 self:HandlePlateRemoved(unit)
@@ -1647,7 +1677,7 @@ function BGE:PollLiveBars()
     for _, row in ipairs(self.rows or {}) do
         if row and (row._seenIdentity or row._seenPlate) and not row._preview then
             local unit = row.unit
-            if unit and SafeUnitExists(unit) and SafeUnitIsEnemy(unit) then
+            if unit and SafeUnitExists(unit) and SafeUnitIsEnemyPlayer(unit) then
                 self:UpdateHealth(row, unit)
                 self:UpdatePower(row, unit)
             end
@@ -1696,7 +1726,7 @@ function BGE:UpdateRowVisibilities()
                 row:SetAlpha(ROW_ALPHA_ACTIVE)
             elseif row._seenIdentity or row._seenPlate then
                 local unit = row.unit
-                local active = unit and SafeUnitExists(unit) and SafeUnitIsEnemy(unit)
+                local active = unit and SafeUnitExists(unit) and SafeUnitIsEnemyPlayer(unit)
                 local dead = active and SafeUnitIsDead(unit)
 
                 if dead then
