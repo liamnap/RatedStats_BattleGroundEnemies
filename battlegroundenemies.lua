@@ -4,7 +4,9 @@ RSTATS = RSTATS or _G.RSTATS
 -- Rated Stats - Battleground Enemies
 -- 12.0.5 nameplate-only rebuild.
 -- No scoreboard seeding, no GetBattlefieldScore, no C_PvP.GetScoreInfo.
--- Secure buttons are pre-bound to nameplate1..nameplate40 so visible nameplate rows remain clickable.
+-- Stable roster slots are filled from exposed enemy nameplate units.
+-- Name/spec/role are not taken from secret scoreboard fields or enemy inspection.
+-- Live rows use exposed nameplate identity, class colour, health, power, OOR, dead state, and achievements.
 
 local BGE = {}
 _G.RSTATS_BGE = BGE
@@ -31,9 +33,6 @@ BGE._anchorHover = 0
 BGE._anchorHidePending = false
 BGE._dropdownMenu = nil
 BGE._menuOpen = false
-BGE._inspectByGuid = {}
-BGE._inspectQueue = {}
-BGE._lastInspectAt = 0
 
 local RS_TEXT_R, RS_TEXT_G, RS_TEXT_B = 182/255, 158/255, 134/255
 
@@ -182,10 +181,25 @@ local function SafeUnitFullName(unit)
 end
 
 local function SafeUnitClass(unit)
-    if not unit then return nil, nil end
-    local ok, localized, classFile = pcall(UnitClass, unit)
-    if not ok then return nil, nil end
-    return SafeNonEmptyString(localized), SafeNonEmptyString(classFile)
+    if not unit then return nil, nil, nil end
+
+    if _G.UnitClassBase then
+        local okBase, classFileBase, classIDBase = pcall(_G.UnitClassBase, unit)
+        local classFile = okBase and SafeNonEmptyString(classFileBase) or nil
+        local classID = okBase and tonumber(SafeToString(classIDBase)) or nil
+        if classFile then
+            return nil, classFile, classID
+        end
+    end
+
+    if _G.UnitClass then
+        local ok, localized, classFile, classID = pcall(_G.UnitClass, unit)
+        if ok then
+            return SafeNonEmptyString(localized), SafeNonEmptyString(classFile), tonumber(SafeToString(classID))
+        end
+    end
+
+    return nil, nil, nil
 end
 
 local function NormalizeFactionIndex(v)
@@ -419,36 +433,6 @@ local function NormalizeRole(role)
     s = s:upper()
     if s == "TANK" or s == "HEALER" or s == "DAMAGER" then return s end
     return nil
-end
-
-local PURE_DPS_CLASS = {
-    HUNTER = true,
-    MAGE = true,
-    ROGUE = true,
-    WARLOCK = true,
-}
-
-local function GetRoleFromSpecID(specID)
-    specID = tonumber(SafeToString(specID))
-    if not specID or specID <= 0 then return nil, nil end
-
-    local specName = nil
-    if _G.GetSpecializationInfoByID then
-        local ok, id, name, _, _, role = pcall(_G.GetSpecializationInfoByID, specID)
-        if ok then
-            specName = SafeNonEmptyString(name)
-            role = NormalizeRole(role)
-            if role then return role, specName end
-        end
-    end
-
-    if _G.GetSpecializationRoleByID then
-        local ok, role = pcall(_G.GetSpecializationRoleByID, specID)
-        role = ok and NormalizeRole(role) or nil
-        if role then return role, specName end
-    end
-
-    return nil, specName
 end
 
 local function SetRoleTexture(tex, role)
@@ -1116,9 +1100,6 @@ function BGE:ClearAllRows()
     wipe(self.rowByGuid)
     wipe(self.rowByDisplayName)
     wipe(self.rowByBaseName)
-    wipe(self._inspectByGuid)
-    wipe(self._inspectQueue)
-
     for _, row in ipairs(self.rows) do
         self:ReleaseRow(row)
     end
@@ -1144,50 +1125,6 @@ function BGE:MarkRowMappings(row)
         if old and old ~= row then self:ReleaseRow(old) end
         self.rowByBaseName[row.name] = row
     end
-end
-
-function BGE:TryInspectUnit(row, unit)
-    if not row or not unit or row.specID then return end
-    if InLockdown() then return end
-    if UnitAffectingCombat and UnitAffectingCombat("player") then return end
-    if not _G.NotifyInspect or not _G.CanInspect or not _G.GetInspectSpecialization then return end
-    if not SafeUnitExists(unit) or not SafeUnitIsEnemy(unit) then return end
-
-    local okCan, canInspect = pcall(_G.CanInspect, unit, false)
-    if (not okCan) or (not SafeBool(canInspect)) then return end
-
-    local guid = row.guid or SafeUnitGUID(unit)
-    if not guid then return end
-
-    local now = GetTime()
-    if (now - (self._lastInspectAt or 0)) < 2.0 then return end
-    self._lastInspectAt = now
-    self._inspectByGuid[guid] = row
-
-    local okNotify = pcall(_G.NotifyInspect, unit)
-    if okNotify then
-        DPrint("INSPECT:" .. guid, "requested inspect for " .. (row.name or unit))
-    end
-end
-
-function BGE:ApplySpecFromUnit(row, unit)
-    if not row or not unit or not _G.GetInspectSpecialization then return false end
-    local ok, specID = pcall(_G.GetInspectSpecialization, unit)
-    specID = ok and tonumber(SafeToString(specID)) or nil
-    if not specID or specID <= 0 then return false end
-
-    local role, specName = GetRoleFromSpecID(specID)
-    row.specID = specID
-    row.specName = specName
-    row.role = role or row.role
-
-    if row.specText then
-        row.specText:SetText(specName or "")
-    end
-    if row.role then
-        SetRoleTexture(row.roleIcon, row.role)
-    end
-    return true
 end
 
 function BGE:UpdateIdentity(row, unit)
@@ -1222,10 +1159,6 @@ function BGE:UpdateIdentity(row, unit)
     if base then row.name = base end
     if classFile then row.classFile = classFile end
 
-    if not row.role and classFile and PURE_DPS_CLASS[classFile] then
-        row.role = "DAMAGER"
-    end
-
     if row.name then
         row.nameText:SetText(row.name)
     elseif row.displayName then
@@ -1239,11 +1172,11 @@ function BGE:UpdateIdentity(row, unit)
     row.bg:SetColorTexture(0, 0, 0, 0.35)
     ApplyClassAlpha(row, row._outOfRange and CLASS_ALPHA_OOR or CLASS_ALPHA_ACTIVE)
 
-    if row.role then
-        SetRoleTexture(row.roleIcon, row.role)
-    else
-        row.roleIcon:Hide()
-    end
+    row.role = nil
+    row.specID = nil
+    row.specName = nil
+    row.roleIcon:Hide()
+    row.specText:SetText("")
 
     local hadIcon = row.achievIconTex
     if row.achievIconTex == nil then
@@ -1262,8 +1195,6 @@ function BGE:UpdateIdentity(row, unit)
     end
 
     self:MarkRowMappings(row)
-    self:ApplySpecFromUnit(row, unit)
-    self:TryInspectUnit(row, unit)
 
     if row.achievIconTex and not hadIcon and not InLockdown() then
         self:ApplyRowLayout(row)
@@ -1827,19 +1758,25 @@ function BGE:ApplyRowLayout(row)
         row.power:Hide()
     end
 
-    local roleSize = math.floor(math.max(10, math.min(h, 16)))
-    roleSize = math.max(10, math.min(roleSize, 96))
-    row.roleIcon:ClearAllPoints()
-    row.roleIcon:SetSize(roleSize, roleSize)
-    row.roleIcon:SetPoint("TOPLEFT", row.hp, "TOPLEFT", 2, 0)
+    local hasRoleIcon = row.role ~= nil and row._preview == true
+    local roleSize = hasRoleIcon and math.floor(math.max(10, math.min(h, 16))) or 0
+    if roleSize > 0 then
+        roleSize = math.max(10, math.min(roleSize, 96))
+        row.roleIcon:ClearAllPoints()
+        row.roleIcon:SetSize(roleSize, roleSize)
+        row.roleIcon:SetPoint("TOPLEFT", row.hp, "TOPLEFT", 2, 0)
+    else
+        row.roleIcon:Hide()
+    end
 
     local iconTex = row.achievIconTex
     local iconSize = 8
     local iconPad = 1
     local iconOffset = iconTex and (iconSize + iconPad) or 0
+    local nameLeft = 2 + (roleSize > 0 and (roleSize + 2) or 0) + iconOffset
 
     row.nameText:ClearAllPoints()
-    row.nameText:SetPoint("TOPLEFT", row.hp, "TOPLEFT", 2 + roleSize + 2 + iconOffset, -1)
+    row.nameText:SetPoint("TOPLEFT", row.hp, "TOPLEFT", nameLeft, -1)
     row.nameText:SetJustifyH("LEFT")
     if row.nameText.SetDrawLayer then row.nameText:SetDrawLayer("OVERLAY", 7) end
 
@@ -2143,7 +2080,6 @@ evt:RegisterEvent("UNIT_MAXPOWER")
 evt:RegisterEvent("UNIT_DISPLAYPOWER")
 evt:RegisterEvent("PVP_MATCH_ACTIVE")
 evt:RegisterEvent("PVP_MATCH_COMPLETE")
-evt:RegisterEvent("INSPECT_READY")
 pcall(function() evt:RegisterEvent("UNIT_HEALTH_FREQUENT") end)
 pcall(function() evt:RegisterEvent("UNIT_POWER_FREQUENT") end)
 
@@ -2251,20 +2187,6 @@ evt:SetScript("OnEvent", function(_, event, arg1)
         return
     end
 
-    if event == "INSPECT_READY" then
-        local guid = SafeNonEmptyString(arg1)
-        if guid and BGE._inspectByGuid then
-            local row = BGE._inspectByGuid[guid]
-            if row and row.unit and SafeUnitExists(row.unit) then
-                BGE:ApplySpecFromUnit(row, row.unit)
-                BGE:UpdateIdentity(row, row.unit)
-                BGE:ApplyRowLayout(row)
-            end
-            BGE._inspectByGuid[guid] = nil
-        end
-        if _G.ClearInspectPlayer then pcall(_G.ClearInspectPlayer) end
-        return
-    end
 end)
 
 SLASH_RSTBGE1 = "/rstbge"
