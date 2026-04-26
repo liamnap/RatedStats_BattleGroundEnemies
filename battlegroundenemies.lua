@@ -6,7 +6,7 @@ RSTATS = RSTATS or _G.RSTATS
 -- No scoreboard seeding, no GetBattlefieldScore, no C_PvP.GetScoreInfo.
 -- Stable roster slots are filled from exposed enemy nameplate units.
 -- Name/spec/role are not taken from secret scoreboard fields or enemy inspection.
--- Live rows use exposed nameplate identity, class colour, health, power, OOR, dead state, and achievements.
+-- Live rows use exposed nameplate display names, class colour, health, power, OOR, dead state, and achievements when a non-secret name key is available.
 
 local BGE = {}
 _G.RSTATS_BGE = BGE
@@ -53,14 +53,24 @@ local function InLockdown()
     return _G.InCombatLockdown and _G.InCombatLockdown()
 end
 
+local function IsSecretValue(v)
+    if _G.issecretvalue then
+        local ok, secret = pcall(_G.issecretvalue, v)
+        return ok and secret == true
+    end
+    return false
+end
+
 local function SafeToString(v)
+    if IsSecretValue(v) then return nil end
     local ok, s = pcall(function() return tostring(v) end)
     if not ok or type(s) ~= "string" then return nil end
-    if _G.issecretvalue and _G.issecretvalue(s) then return nil end
+    if IsSecretValue(s) then return nil end
     return s
 end
 
 local function SafeNonEmptyString(v)
+    if IsSecretValue(v) then return nil end
     local s = SafeToString(v)
     if type(s) ~= "string" then return nil end
     local okLen, n = pcall(string.len, s)
@@ -199,6 +209,72 @@ local function SafeUnitFullName(unit)
     return n, n
 end
 
+local function DisplayNameFromRawName(v)
+    if type(v) == "nil" then return nil end
+
+    if _G.Ambiguate then
+        local ok, shortName = pcall(_G.Ambiguate, v, "short")
+        if ok and type(shortName) ~= "nil" then
+            return shortName
+        end
+    end
+
+    return v
+end
+
+local function SafeNameKeysFromRaw(v)
+    if type(v) == "nil" or IsSecretValue(v) then return nil, nil end
+
+    local full = SafeNonEmptyString(v)
+    if not full then return nil, nil end
+
+    local okBase, base = pcall(function() return full:match("^([^-]+)") end)
+    if not okBase or not base or base == "" then base = full end
+    return full, base
+end
+
+local function RawNameUsableForDisplay(v)
+    if type(v) == "nil" then return false end
+    if IsSecretValue(v) then return true end
+    return SafeNonEmptyString(v) ~= nil
+end
+
+local function TryGetUnitDisplayName(unit)
+    if not unit then return nil, nil, nil end
+
+    if _G.GetUnitName then
+        local okFull, rawFull = pcall(_G.GetUnitName, unit, true)
+        if okFull and RawNameUsableForDisplay(rawFull) then
+            local display = DisplayNameFromRawName(rawFull)
+            local keyFull, keyBase = SafeNameKeysFromRaw(rawFull)
+            return display, keyFull, keyBase
+        end
+
+        local okBase, rawBase = pcall(_G.GetUnitName, unit, false)
+        if okBase and RawNameUsableForDisplay(rawBase) then
+            local display = DisplayNameFromRawName(rawBase)
+            local keyFull, keyBase = SafeNameKeysFromRaw(rawBase)
+            return display, keyFull, keyBase
+        end
+    end
+
+    if _G.UnitName then
+        local ok, rawName, rawRealm = pcall(_G.UnitName, unit)
+        if ok and RawNameUsableForDisplay(rawName) then
+            local display = DisplayNameFromRawName(rawName)
+            if not IsSecretValue(rawName) and not IsSecretValue(rawRealm) then
+                local name = SafeNonEmptyString(rawName)
+                local realm = SafeNonEmptyString(rawRealm)
+                if name and realm then return display, name .. "-" .. realm, name end
+                if name then return display, name, name end
+            end
+            return display, nil, nil
+        end
+    end
+
+    return nil, nil, nil
+end
+
 local function SafeUnitClass(unit)
     if not unit then return nil, nil, nil end
 
@@ -249,61 +325,55 @@ end
 
 local function GetNameplateDisplayNames(unit)
     local _, uf = SafePlateFrame(unit)
-    if not uf then return nil, nil end
+    local rawDisplay = nil
 
-    local disp = nil
     local function TryFS(fs)
-        if disp then return end
+        if type(rawDisplay) ~= "nil" then return end
         if not fs or not fs.GetText then return end
         local okT, t = pcall(fs.GetText, fs)
-        local s = SafeNonEmptyString(t)
-        if s then disp = s end
+        if okT and RawNameUsableForDisplay(t) then
+            rawDisplay = t
+        end
     end
 
-    TryFS(uf.name)
-    TryFS(uf.Name)
-    TryFS(uf.unitName)
-    TryFS(uf.UnitName)
+    if uf then
+        -- Blizzard's NamePlateUnitFrame owns the name FontString as UnitFrame.name.
+        TryFS(uf.name)
+        TryFS(uf.Name)
+        TryFS(uf.unitName)
+        TryFS(uf.UnitName)
 
-    if uf.healthBar then
-        TryFS(uf.healthBar.name)
-        TryFS(uf.healthBar.unitName)
-        TryFS(uf.healthBar.UnitName)
-        TryFS(uf.healthBar.TextString)
-    end
-    if uf.HealthBar then
-        TryFS(uf.HealthBar.name)
-        TryFS(uf.HealthBar.unitName)
-        TryFS(uf.HealthBar.UnitName)
-        TryFS(uf.HealthBar.TextString)
-    end
+        if uf.HealthBarsContainer and uf.HealthBarsContainer.healthBar then
+            local hb = uf.HealthBarsContainer.healthBar
+            TryFS(hb.UnitName)
+            TryFS(hb.unitName)
+            TryFS(hb.name)
+        end
 
-    if not disp and uf.GetRegions then
-        local regions = { uf:GetRegions() }
-        for i = 1, #regions do
-            local r = regions[i]
-            if r and r.GetObjectType then
-                local okOT, ot = pcall(r.GetObjectType, r)
-                if okOT and ot == "FontString" then
-                    TryFS(r)
-                    if disp then break end
+        if type(rawDisplay) == "nil" and uf.GetRegions then
+            local okRegions, regions = pcall(function() return { uf:GetRegions() } end)
+            if okRegions and regions then
+                for i = 1, #regions do
+                    local r = regions[i]
+                    if r and r.GetObjectType then
+                        local okOT, ot = pcall(r.GetObjectType, r)
+                        if okOT and ot == "FontString" then
+                            TryFS(r)
+                            if type(rawDisplay) ~= "nil" then break end
+                        end
+                    end
                 end
             end
         end
     end
 
-    if not disp then
-        local full, base = SafeUnitFullName(unit)
-        disp = full
-        if not base and disp then
-            local okB, b = pcall(function() return disp:match("^[^-]+") end)
-            base = (okB and b) or disp
-        end
-        return disp, base
+    if type(rawDisplay) ~= "nil" then
+        local display = DisplayNameFromRawName(rawDisplay)
+        local keyFull, keyBase = SafeNameKeysFromRaw(rawDisplay)
+        return display, keyFull, keyBase
     end
 
-    local okB, base = pcall(function() return disp:match("^[^-]+") end)
-    return disp, (okB and base) or disp
+    return TryGetUnitDisplayName(unit)
 end
 
 local function SafeStatusBarValues(sb)
@@ -901,6 +971,7 @@ local function MakeRow(parent, index)
     row.name = nil
     row.fullName = nil
     row.displayName = nil
+    row.displayText = nil
     row.classFile = nil
     row.role = nil
     row.specID = nil
@@ -1060,13 +1131,13 @@ function BGE:GetRowForPlateUnit(unit)
     local guid = SafeUnitGUID(unit)
     if guid and self.rowByGuid[guid] then return self.rowByGuid[guid] end
 
-    local display, base = GetNameplateDisplayNames(unit)
+    local _, keyFull, keyBase = GetNameplateDisplayNames(unit)
     local full, unitBase = SafeUnitFullName(unit)
-    base = base or unitBase
+    keyFull = keyFull or full
+    keyBase = keyBase or unitBase
 
-    if full and self.rowByDisplayName[full] then return self.rowByDisplayName[full] end
-    if display and self.rowByDisplayName[display] then return self.rowByDisplayName[display] end
-    if base and self.rowByBaseName[base] then return self.rowByBaseName[base] end
+    if keyFull and self.rowByDisplayName[keyFull] then return self.rowByDisplayName[keyFull] end
+    if keyBase and self.rowByBaseName[keyBase] then return self.rowByBaseName[keyBase] end
 
     local want = self:ResolveExpectedRows()
     for i = 1, want do
@@ -1097,6 +1168,7 @@ function BGE:ReleaseRow(row, keepSeen)
     row.name = nil
     row.fullName = nil
     row.displayName = nil
+    row.displayText = nil
     row.classFile = nil
     row.role = nil
     row.specID = nil
@@ -1175,16 +1247,15 @@ function BGE:UpdateIdentity(row, unit)
     if not SafeUnitIsEnemy(unit) then return end
 
     local guid = SafeUnitGUID(unit)
-    local display, base = GetNameplateDisplayNames(unit)
+    local displayText, keyFull, keyBase = GetNameplateDisplayNames(unit)
     local full, unitBase = SafeUnitFullName(unit)
     local _, classFile = SafeUnitClass(unit)
 
-    if not display then display = full end
-    if not base then base = unitBase end
-    if not full and display and display:find("-", 1, true) then full = display end
+    keyFull = keyFull or full
+    keyBase = keyBase or unitBase
 
-    if display then
-        local old = self.rowByDisplayName[display]
+    if keyFull then
+        local old = self.rowByDisplayName[keyFull]
         if old and old ~= row then
             self:ReleaseRow(old)
         end
@@ -1197,13 +1268,19 @@ function BGE:UpdateIdentity(row, unit)
     end
 
     if guid then row.guid = guid end
-    if display then row.displayName = display end
-    if full then row.fullName = full end
-    if base then row.name = base end
+    if keyFull then row.displayName = keyFull end
+    if keyFull then row.fullName = keyFull end
+    if keyBase then row.name = keyBase end
+    if type(displayText) ~= "nil" then row.displayText = displayText end
     if classFile then row.classFile = classFile end
 
-    local hasIdentity = guid or display or full or base
-    if row.name then
+    local hasKeyIdentity = guid or keyFull or keyBase
+    local hasDisplayIdentity = type(row.displayText) ~= "nil" or hasKeyIdentity
+
+    if type(row.displayText) ~= "nil" then
+        -- Secret names can be displayed, but not safely split, compared, or used as table keys.
+        row.nameText:SetText(row.displayText)
+    elseif row.name then
         row.nameText:SetText(row.name)
     elseif row.displayName then
         row.nameText:SetText(row.displayName)
@@ -1217,7 +1294,7 @@ function BGE:UpdateIdentity(row, unit)
     end
 
     row._seenPlate = true
-    if hasIdentity then
+    if hasDisplayIdentity then
         row._seenIdentity = true
     end
     row._preview = false
@@ -1231,7 +1308,7 @@ function BGE:UpdateIdentity(row, unit)
     row.specText:SetText("")
 
     local hadIcon = row.achievIconTex
-    if hasIdentity and row.achievIconTex == nil then
+    if hasKeyIdentity and row.achievIconTex == nil then
         row.achievIconTex, row.achievText, row.achievTint = GetIconTextureForEnemyName(row.fullName or row.displayName, row.name)
     end
     if row.achievIconTex then
@@ -1242,19 +1319,14 @@ function BGE:UpdateIdentity(row, unit)
             row.icon:SetVertexColor(1, 1, 1)
         end
         row.icon:Show()
+        row.iconHit:Show()
     else
         row.icon:Hide()
+        row.iconHit:Hide()
     end
+    if row.achievIconTex ~= hadIcon then UpdateNameClipToHPFill(row) end
 
-    if hasIdentity then
-        self:MarkRowMappings(row)
-    end
-
-    if row.achievIconTex and not hadIcon and not InLockdown() then
-        self:ApplyRowLayout(row)
-    end
-
-    UpdateNameClipToHPFill(row)
+    self:MarkRowMappings(row)
 end
 
 function BGE:UpdateHealth(row, unit)
@@ -1427,7 +1499,7 @@ function BGE:HandlePlateAdded(unit)
     self:UpdatePower(row, unit)
     ApplyClassAlpha(row, CLASS_ALPHA_ACTIVE)
 
-    DPrint("PLATE_ADD:" .. unit, "bound enemy " .. unit .. " name=" .. tostring(row.name or row.displayName or "nil") .. " class=" .. tostring(row.classFile or "nil"))
+    DPrint("PLATE_ADD:" .. unit, "bound enemy " .. unit .. " keyedName=" .. tostring(row.name or row.displayName or "nil") .. " display=" .. (type(row.displayText) ~= "nil" and "yes" or "no") .. " class=" .. tostring(row.classFile or "nil"))
 
     self:UpdateRowVisibilities()
     self:SyncSelectedRowToTarget()
