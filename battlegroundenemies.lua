@@ -3,7 +3,8 @@ RSTATS = RSTATS or _G.RSTATS
 
 -- Rated Stats - Battleground Enemies
 -- 12.0.5 scoreboard-roster + nameplate-live rebuild.
--- Scoreboard is used only to seed enemy roster rows: name, class, faction, race, and best-effort role/spec display.
+-- Scoreboard seeds enemy roster rows: name, class, faction, race, and best-effort role.
+-- Talent spec may be read only to derive role; it is not displayed on the row.
 -- Nameplates are used for live binding, health, power, OOR, DEAD state, and class/name fallback.
 -- No enemy inspect path. No scoreboard-driven health/power. No role/spec sorting dependency.
 -- Secret display values may be passed directly to FontStrings, but are not split, compared, or used as table keys.
@@ -45,7 +46,7 @@ local ROW_ALPHA_ACTIVE   = 1.0
 local ROW_ALPHA_OOR      = 0.55
 local ROW_ALPHA_DEAD     = 0.50
 local ROW_ALPHA_UNKNOWN  = 0.35
-local CLASS_ALPHA_ACTIVE = 1.00
+local CLASS_ALPHA_ACTIVE = 0.85
 local CLASS_ALPHA_OOR    = 0.55
 local CLASS_ALPHA_DEAD   = 0.50
 
@@ -582,6 +583,84 @@ local function ScoreboardRoleToRole(roleAssigned)
     return nil
 end
 
+local SPEC_ROLE_BY_NAME = {
+    ["Blood"] = "TANK",
+    ["Frost"] = "DAMAGER",
+    ["Unholy"] = "DAMAGER",
+
+    ["Havoc"] = "DAMAGER",
+    ["Vengeance"] = "TANK",
+
+    ["Balance"] = "DAMAGER",
+    ["Feral"] = "DAMAGER",
+    ["Guardian"] = "TANK",
+    ["Restoration"] = "HEALER",
+
+    ["Devastation"] = "DAMAGER",
+    ["Preservation"] = "HEALER",
+    ["Augmentation"] = "DAMAGER",
+
+    ["Beast Mastery"] = "DAMAGER",
+    ["Marksmanship"] = "DAMAGER",
+    ["Survival"] = "DAMAGER",
+
+    ["Arcane"] = "DAMAGER",
+    ["Fire"] = "DAMAGER",
+
+    ["Brewmaster"] = "TANK",
+    ["Mistweaver"] = "HEALER",
+    ["Windwalker"] = "DAMAGER",
+
+    ["Holy"] = "HEALER",
+    ["Protection"] = "TANK",
+    ["Retribution"] = "DAMAGER",
+
+    ["Discipline"] = "HEALER",
+    ["Shadow"] = "DAMAGER",
+
+    ["Assassination"] = "DAMAGER",
+    ["Outlaw"] = "DAMAGER",
+    ["Subtlety"] = "DAMAGER",
+
+    ["Elemental"] = "DAMAGER",
+    ["Enhancement"] = "DAMAGER",
+
+    ["Affliction"] = "DAMAGER",
+    ["Demonology"] = "DAMAGER",
+    ["Destruction"] = "DAMAGER",
+
+    ["Arms"] = "DAMAGER",
+    ["Fury"] = "DAMAGER",
+}
+
+local SPEC_ROLE_BY_CLASS = {
+    DEATHKNIGHT = { Blood = "TANK", Frost = "DAMAGER", Unholy = "DAMAGER" },
+    DEMONHUNTER = { Havoc = "DAMAGER", Vengeance = "TANK" },
+    DRUID = { Balance = "DAMAGER", Feral = "DAMAGER", Guardian = "TANK", Restoration = "HEALER" },
+    EVOKER = { Devastation = "DAMAGER", Preservation = "HEALER", Augmentation = "DAMAGER" },
+    HUNTER = { ["Beast Mastery"] = "DAMAGER", Marksmanship = "DAMAGER", Survival = "DAMAGER" },
+    MAGE = { Arcane = "DAMAGER", Fire = "DAMAGER", Frost = "DAMAGER" },
+    MONK = { Brewmaster = "TANK", Mistweaver = "HEALER", Windwalker = "DAMAGER" },
+    PALADIN = { Holy = "HEALER", Protection = "TANK", Retribution = "DAMAGER" },
+    PRIEST = { Discipline = "HEALER", Holy = "HEALER", Shadow = "DAMAGER" },
+    ROGUE = { Assassination = "DAMAGER", Outlaw = "DAMAGER", Subtlety = "DAMAGER" },
+    SHAMAN = { Elemental = "DAMAGER", Enhancement = "DAMAGER", Restoration = "HEALER" },
+    WARLOCK = { Affliction = "DAMAGER", Demonology = "DAMAGER", Destruction = "DAMAGER" },
+    WARRIOR = { Arms = "DAMAGER", Fury = "DAMAGER", Protection = "TANK" },
+}
+
+local function RoleFromSpecName(specName, classToken)
+    if type(specName) == "nil" or IsSecretValue(specName) then return nil end
+
+    local s = SafeNonEmptyString(specName)
+    if not s then return nil end
+
+    local byClass = classToken and SPEC_ROLE_BY_CLASS[classToken]
+    if byClass and byClass[s] then return byClass[s] end
+
+    return SPEC_ROLE_BY_NAME[s]
+end
+
 local function SetRoleTexture(tex, role)
     if not tex then return false end
     role = NormalizeRole(role)
@@ -943,43 +1022,46 @@ local function MakeRow(parent, index)
 
     row.bg = row:CreateTexture(nil, "BACKGROUND")
     row.bg:SetAllPoints(true)
-    row.bg:SetColorTexture(0, 0, 0, 0.35)
+    row.bg:SetTexture("Interface\\RaidFrame\\Raid-Bar-Hp-Bg")
+    row.bg:SetVertexColor(0.10, 0.10, 0.10, 0.95)
 
     row.borderTop = row:CreateTexture(nil, "BORDER")
-    row.borderTop:SetColorTexture(0, 0, 0, 0.8)
+    row.borderTop:SetColorTexture(0, 0, 0, 0.95)
     row.borderBottom = row:CreateTexture(nil, "BORDER")
-    row.borderBottom:SetColorTexture(0, 0, 0, 0.8)
+    row.borderBottom:SetColorTexture(0, 0, 0, 0.95)
     row.borderLeft = row:CreateTexture(nil, "BORDER")
-    row.borderLeft:SetColorTexture(0, 0, 0, 0.8)
+    row.borderLeft:SetColorTexture(0, 0, 0, 0.95)
     row.borderRight = row:CreateTexture(nil, "BORDER")
-    row.borderRight:SetColorTexture(0, 0, 0, 0.8)
+    row.borderRight:SetColorTexture(0, 0, 0, 0.95)
 
     row.selectTop = row:CreateTexture(nil, "OVERLAY")
-    row.selectTop:SetColorTexture(1, 1, 1, 0.9)
+    row.selectTop:SetColorTexture(1.00, 0.82, 0.00, 1.00)
     row.selectTop:SetHeight(1)
     row.selectTop:Hide()
     row.selectBottom = row:CreateTexture(nil, "OVERLAY")
-    row.selectBottom:SetColorTexture(1, 1, 1, 0.9)
+    row.selectBottom:SetColorTexture(1.00, 0.82, 0.00, 1.00)
     row.selectBottom:SetHeight(1)
     row.selectBottom:Hide()
     row.selectLeft = row:CreateTexture(nil, "OVERLAY")
-    row.selectLeft:SetColorTexture(1, 1, 1, 0.9)
+    row.selectLeft:SetColorTexture(1.00, 0.82, 0.00, 1.00)
     row.selectLeft:SetWidth(1)
     row.selectLeft:Hide()
     row.selectRight = row:CreateTexture(nil, "OVERLAY")
-    row.selectRight:SetColorTexture(1, 1, 1, 0.9)
+    row.selectRight:SetColorTexture(1.00, 0.82, 0.00, 1.00)
     row.selectRight:SetWidth(1)
     row.selectRight:Hide()
 
     row.hp = CreateFrame("StatusBar", nil, row)
     row.hp:SetMinMaxValues(0, 1)
     row.hp:SetValue(0)
-    row.hp:SetStatusBarTexture("Interface\\TargetingFrame\\UI-StatusBar")
+    row.hp:SetStatusBarTexture("Interface\\RaidFrame\\Raid-Bar-Hp-Fill")
+    row.hp:SetStatusBarColor(0.10, 0.90, 0.10, CLASS_ALPHA_ACTIVE)
 
     row.power = CreateFrame("StatusBar", nil, row)
     row.power:SetMinMaxValues(0, 1)
     row.power:SetValue(0)
-    row.power:SetStatusBarTexture("Interface\\TargetingFrame\\UI-StatusBar")
+    row.power:SetStatusBarTexture("Interface\\RaidFrame\\Raid-Bar-Resource-Fill")
+    row.power:SetStatusBarColor(0.0, 0.55, 1.0, 0.90)
     row.power:Hide()
 
     row.roleIcon = row.hp:CreateTexture(nil, "OVERLAY")
@@ -987,6 +1069,7 @@ local function MakeRow(parent, index)
     row.roleIcon:Hide()
 
     row.icon = row.hp:CreateTexture(nil, "OVERLAY")
+    row.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
     row.icon:Hide()
 
     row.iconHit = CreateFrame("Frame", nil, row)
@@ -1030,6 +1113,7 @@ local function MakeRow(parent, index)
     if row.specText.SetMaxLines then row.specText:SetMaxLines(1) end
     row.specText:SetTextColor(RS_TEXT_R, RS_TEXT_G, RS_TEXT_B)
     row.specText:SetText("")
+    row.specText:Hide()
 
     row.guid = nil
     row.name = nil
@@ -1245,16 +1329,8 @@ function BGE:ApplyScoreboardRosterRow(row, info, rowIndex)
     local keyFull, keyBase = SafeNameKeysFromRaw(rawName)
     local classToken = SafeNonEmptyString(info.classToken)
     local raceName = SafeNonEmptyString(info.raceName)
-    local role = ScoreboardRoleToRole(info.roleAssigned)
-    local specName = nil
-
-    if type(info.talentSpec) ~= "nil" then
-        if IsSecretValue(info.talentSpec) then
-            specName = info.talentSpec
-        else
-            specName = SafeNonEmptyString(info.talentSpec)
-        end
-    end
+    local specName = SafeNonEmptyString(info.talentSpec)
+    local role = ScoreboardRoleToRole(info.roleAssigned) or RoleFromSpecName(info.talentSpec, classToken)
 
     if row.unit then
         local activeClass = select(2, SafeUnitClass(row.unit))
@@ -1297,11 +1373,7 @@ function BGE:ApplyScoreboardRosterRow(row, info, rowIndex)
         row.nameText:SetText("Enemy " .. tostring(rowIndex or row.index or ""))
     end
 
-    if type(specName) ~= "nil" then
-        row.specText:SetText(specName)
-    else
-        row.specText:SetText("")
-    end
+    row.specText:SetText("")
 
     if row.role then
         SetRoleTexture(row.roleIcon, row.role)
@@ -1314,6 +1386,9 @@ function BGE:ApplyScoreboardRosterRow(row, info, rowIndex)
         row.hp:SetMinMaxValues(0, 1)
         if not row._hasLiveHP then row.hp:SetValue(1) end
         ApplyClassAlpha(row, CLASS_ALPHA_ACTIVE)
+    end
+    if not row._hasLiveHP and not row._dead then
+        row.hpText:SetText("")
     end
 
     local hadIcon = row.achievIconTex
@@ -1593,11 +1668,7 @@ function BGE:UpdateIdentity(row, unit)
     else
         row.roleIcon:Hide()
     end
-    if type(row.specName) ~= "nil" then
-        row.specText:SetText(row.specName)
-    else
-        row.specText:SetText("")
-    end
+    row.specText:SetText("")
 
     local hadIcon = row.achievIconTex
     if hasKeyIdentity and row.achievIconTex == nil then
@@ -2201,31 +2272,30 @@ function BGE:ApplyRowLayout(row)
         row.power:Hide()
     end
 
-    local hasRoleIcon = row.role ~= nil
-    local roleSize = hasRoleIcon and math.floor(math.max(10, math.min(h, 16))) or 0
-    if roleSize > 0 then
-        roleSize = math.max(10, math.min(roleSize, 96))
-        row.roleIcon:ClearAllPoints()
-        row.roleIcon:SetSize(roleSize, roleSize)
-        row.roleIcon:SetPoint("TOPLEFT", row.hp, "TOPLEFT", 2, 0)
-    else
-        row.roleIcon:Hide()
-    end
+    local leftInset  = 2
+    local rightInset = 4
+
+    local roleSize = math.floor(math.max(10, math.min(h, 16)))
+    roleSize = math.max(10, math.min(roleSize, 96))
+    row.roleIcon:ClearAllPoints()
+    row.roleIcon:SetSize(roleSize, roleSize)
+    row.roleIcon:SetPoint("TOPLEFT", row.hp, "TOPLEFT", leftInset, 0)
 
     local iconTex = row.achievIconTex
     local iconSize = 8
     local iconPad = 1
+    local namePad = 2
     local iconOffset = iconTex and (iconSize + iconPad) or 0
-    local nameLeft = 2 + (roleSize > 0 and (roleSize + 2) or 0) + iconOffset
 
     row.nameText:ClearAllPoints()
-    row.nameText:SetPoint("TOPLEFT", row.hp, "TOPLEFT", nameLeft, -1)
+    row.nameText:SetPoint("TOPLEFT", row.hp, "TOPLEFT", leftInset + roleSize + namePad + iconOffset, -1)
     row.nameText:SetJustifyH("LEFT")
     if row.nameText.SetDrawLayer then row.nameText:SetDrawLayer("OVERLAY", 7) end
 
     if iconTex then
         row.icon:ClearAllPoints()
         row.icon:SetTexture(iconTex)
+        row.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
         row.icon:SetSize(iconSize, iconSize)
         row.icon:SetPoint("LEFT", row.nameText, "LEFT", -(iconSize + iconPad), 1)
         if row.icon.SetDrawLayer then row.icon:SetDrawLayer("OVERLAY", 7) end
@@ -2240,15 +2310,15 @@ function BGE:ApplyRowLayout(row)
 
     row.hpText:ClearAllPoints()
     row.hpText:SetPoint("CENTER", row, "CENTER", 0, -1)
-    row.hpText:SetWidth(math.max(0, w - 8))
+    row.hpText:SetWidth(math.max(0, w - (leftInset + rightInset + (border * 2))))
+    row.hpText:SetJustifyH("CENTER")
     if row.hpText.SetDrawLayer then row.hpText:SetDrawLayer("OVERLAY", 7) end
 
     row.specText:ClearAllPoints()
-    row.specText:SetPoint("RIGHT", row.hp, "RIGHT", -4, -1)
-    row.specText:SetWidth(math.max(0, math.floor(w * 0.35)))
-    if row.specText.SetDrawLayer then row.specText:SetDrawLayer("OVERLAY", 7) end
+    row.specText:SetText("")
+    row.specText:Hide()
 
-    local nameMax = w - (roleSize + iconOffset + 12 + math.floor(w * 0.35))
+    local nameMax = w - (leftInset + rightInset + roleSize + namePad + iconOffset + (border * 2))
     row.nameText:SetWidth(math.max(20, nameMax))
 
     if row.hpText.GetFont and row.hpText.SetFont then
