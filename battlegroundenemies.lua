@@ -2683,6 +2683,7 @@ evt:SetScript("OnEvent", function(_, event, arg1)
     end
 
     if event == "NAME_PLATE_UNIT_ADDED" then
+        RequestBattlefieldScoreData()
         local unit = arg1
         if C_Timer and C_Timer.After then
             C_Timer.After(0, function()
