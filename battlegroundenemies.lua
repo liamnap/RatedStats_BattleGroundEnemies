@@ -2661,7 +2661,6 @@ evt:SetScript("OnEvent", function(_, event, arg1)
     end
 
     if event == "PLAYER_TARGET_CHANGED" then
-        RequestBattlefieldScoreData()
         BGE:HandleExternalUnit("target")
         BGE:SyncSelectedRowToTarget()
         return
@@ -2683,7 +2682,6 @@ evt:SetScript("OnEvent", function(_, event, arg1)
     end
 
     if event == "NAME_PLATE_UNIT_ADDED" then
-        RequestBattlefieldScoreData()
         local unit = arg1
         if C_Timer and C_Timer.After then
             C_Timer.After(0, function()
@@ -2697,7 +2695,6 @@ evt:SetScript("OnEvent", function(_, event, arg1)
     end
 
     if event == "NAME_PLATE_UNIT_REMOVED" then
-        RequestBattlefieldScoreData()
         BGE:HandlePlateRemoved(arg1)
         return
     end
