@@ -39,6 +39,8 @@ BGE._anchorHover = 0
 BGE._anchorHidePending = false
 BGE._dropdownMenu = nil
 BGE._menuOpen = false
+BGE._scoreboardTicker = nil
+BGE._lastScoreboardRequest = 0
 
 local RS_TEXT_R, RS_TEXT_G, RS_TEXT_B = 182/255, 158/255, 134/255
 
@@ -1278,8 +1280,45 @@ function BGE:PrimeRosterSlots()
 end
 
 function BGE:RequestScoreboardData()
+    local now = GetTime()
+    local last = self._lastScoreboardRequest or 0
+    if (now - last) < 0.75 then return end
+    self._lastScoreboardRequest = now
+
     if _G.RequestBattlefieldScoreData then
         pcall(_G.RequestBattlefieldScoreData)
+    end
+end
+
+function BGE:StartScoreboardRefresher()
+    if self._scoreboardTicker then return end
+
+    self._scoreboardTicker = C_Timer.NewTicker(1.0, function()
+        local bge = _G.RSTATS_BGE
+        if not bge then return end
+
+        if not GetSetting("bgeEnabled", true) or not IsInPVPInstance() then
+            bge:StopScoreboardRefresher()
+            return
+        end
+
+        bge:UpdateMatchState()
+
+        -- Stop forcing scoreboard refresh once gates are open.
+        -- After this point, nameplates should own live binding/health/power.
+        if bge._matchStarted then
+            bge:StopScoreboardRefresher()
+            return
+        end
+
+        bge:SeedRosterFromScoreboard()
+    end)
+end
+
+function BGE:StopScoreboardRefresher()
+    if self._scoreboardTicker then
+        self._scoreboardTicker:Cancel()
+        self._scoreboardTicker = nil
     end
 end
 
@@ -2382,6 +2421,7 @@ function BGE:RefreshVisibility()
 
     if not GetSetting("bgeEnabled", true) then
         self.frame:SetAlpha(0)
+        self:StopScoreboardRefresher()
         self:StopNameplateScanner()
         self:StopLiveBarPoller()
         return
@@ -2415,10 +2455,12 @@ function BGE:RefreshVisibility()
 
         if inPvp then
             self._enteredBGAt = self._enteredBGAt or GetTime()
+            self:StartScoreboardRefresher()
             self:StartNameplateScanner()
             self:StartLiveBarPoller()
             self:ScanNameplates()
         else
+            self:StopScoreboardRefresher()
             self:StopNameplateScanner()
             self:StopLiveBarPoller()
             self:EnsurePreviewRows()
@@ -2426,6 +2468,7 @@ function BGE:RefreshVisibility()
 
         self:UpdateRowVisibilities()
     else
+        self:StopScoreboardRefresher()
         self:StopNameplateScanner()
         self:StopLiveBarPoller()
         self:ClearPreviewRows()
