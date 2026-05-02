@@ -2650,7 +2650,6 @@ evt:SetScript("OnEvent", function(_, event, arg1)
 
     if event == "UPDATE_BATTLEFIELD_SCORE" then
         RequestBattlefieldScoreData()
-        print("Requesting Scoreboard")
         BGE:SeedRosterFromScoreboard()
         BGE:ScanNameplates()
         return
@@ -2662,6 +2661,7 @@ evt:SetScript("OnEvent", function(_, event, arg1)
     end
 
     if event == "PLAYER_TARGET_CHANGED" then
+        RequestBattlefieldScoreData()
         BGE:HandleExternalUnit("target")
         BGE:SyncSelectedRowToTarget()
         return
