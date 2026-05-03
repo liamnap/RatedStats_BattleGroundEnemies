@@ -2574,6 +2574,7 @@ end
 local evt = CreateFrame("Frame")
 evt:RegisterEvent("PLAYER_LOGIN")
 evt:RegisterEvent("PLAYER_ENTERING_WORLD")
+evt:RegisterEvent("PLAYER_JOINED_PVP_MATCH")
 evt:RegisterEvent("ZONE_CHANGED_NEW_AREA")
 evt:RegisterEvent("PLAYER_REGEN_ENABLED")
 evt:RegisterEvent("PLAYER_DEAD")
@@ -2608,7 +2609,7 @@ evt:SetScript("OnEvent", function(_, event, arg1)
         return
     end
 
-    if event == "PLAYER_ENTERING_WORLD" or event == "ZONE_CHANGED_NEW_AREA" then
+    if event == "PLAYER_ENTERING_WORLD" or event == "PLAYER_JOINED_PVP_MATCH" or event == "ZONE_CHANGED_NEW_AREA" then
         BGE:UpdateMatchState()
         if IsInPVPInstance() or GetSetting("bgePreview", false) then
             CreateMainFrame()
@@ -2616,6 +2617,22 @@ evt:SetScript("OnEvent", function(_, event, arg1)
         BGE:ApplySettings()
         BGE:SeedRosterFromScoreboard()
         BGE:ScanNameplates()
+
+		if event == "PLAYER_JOINED_PVP_MATCH" then
+			BGE:RequestScoreboardData()
+	
+			for _, delay in ipairs({ 0.10, 0.50, 1.00 }) do
+				C_Timer.After(delay, function()
+					local bge = _G.RSTATS_BGE
+					if not bge or not GetSetting("bgeEnabled", true) or not IsInPVPInstance() then return end
+	
+					bge:RequestScoreboardData()
+					bge:SeedRosterFromScoreboard()
+					bge:ScanNameplates()
+				end)
+			end
+		end
+        
         return
     end
 
