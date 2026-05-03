@@ -2611,31 +2611,58 @@ evt:SetScript("OnEvent", function(_, event, arg1)
 
     if event == "PLAYER_ENTERING_WORLD" or event == "ZONE_CHANGED_NEW_AREA" then
         BGE:UpdateMatchState()
-        if IsInPVPInstance() or GetSetting("bgePreview", false) then
+        local inPvp = IsInPVPInstance()
+        if inPvp or GetSetting("bgePreview", false) then
             CreateMainFrame()
         end
         BGE:ApplySettings()
-		local isStartUp = false
-		if event == "PLAYER_ENTERING_WORLD" and IsInPVPInstance() and C_PvP and C_PvP.GetActiveMatchState then
-			local ok, state = pcall(C_PvP.GetActiveMatchState)
-			isStartUp = ok and state == Enum.PvPMatchState.StartUp
-		end
-	
-		if isStartUp then
-			C_Timer.After(5, function()
-				local bge = _G.RSTATS_BGE
-				if not bge or not GetSetting("bgeEnabled", true) or not IsInPVPInstance() then return end
-	
-				bge:UpdateMatchState()
-				bge:RequestScoreboardData()
-				bge:SeedRosterFromScoreboard()
-				bge:ScanNameplates()
-				bge:UpdateRowVisibilities()
-			end)
-		else
-			BGE:SeedRosterFromScoreboard()
-			BGE:ScanNameplates()
-		end
+        local isStartUp = false
+        if event == "PLAYER_ENTERING_WORLD" and inPvp and C_PvP and C_PvP.GetActiveMatchState and Enum and Enum.PvPMatchState then
+            local ok, state = pcall(C_PvP.GetActiveMatchState)
+            isStartUp = ok and state == Enum.PvPMatchState.StartUp
+        end
+
+        if isStartUp then
+            local attempts = 0
+
+            BGE._scoreboardSeeded = false
+            BGE._scoreboardEnemyCount = nil
+            BGE:RequestScoreboardData()
+
+            local function TryStartupScoreboard()
+                local bge = _G.RSTATS_BGE
+                if not bge or not GetSetting("bgeEnabled", true) or not IsInPVPInstance() then return end
+
+                local stillStartUp = false
+                if C_PvP and C_PvP.GetActiveMatchState and Enum and Enum.PvPMatchState then
+                    local ok, state = pcall(C_PvP.GetActiveMatchState)
+                    stillStartUp = ok and state == Enum.PvPMatchState.StartUp
+                end
+                if not stillStartUp then return end
+
+                local expected = tonumber(bge:ResolveExpectedRows()) or 10
+                local have = tonumber(bge._scoreboardEnemyCount) or 0
+                if have >= expected then return end
+
+                attempts = attempts + 1
+
+                bge:UpdateMatchState()
+                bge:SeedRosterFromScoreboard()
+                bge:ScanNameplates()
+                bge:UpdateRowVisibilities()
+
+                have = tonumber(bge._scoreboardEnemyCount) or 0
+                if have < expected and attempts < 30 then
+                    bge:RequestScoreboardData()
+                    C_Timer.After(1, TryStartupScoreboard)
+                end
+            end
+
+            C_Timer.After(1, TryStartupScoreboard)
+        else
+            BGE:SeedRosterFromScoreboard()
+            BGE:ScanNameplates()
+        end
         
         return
     end
