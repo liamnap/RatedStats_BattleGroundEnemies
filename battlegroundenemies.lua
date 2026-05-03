@@ -1423,7 +1423,7 @@ function BGE:SeedRosterFromScoreboard()
 
     self:EnsureSecureRows()
     self:RequestScoreboardData()
-    if self:EnsureScoreboardFeed() then return end
+    self:EnsureScoreboardFeed()
 
     local enemyFaction = GetEnemyFactionIndex()
     if enemyFaction == nil then return end
