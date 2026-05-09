@@ -1590,6 +1590,39 @@ function BGE:ApplyScoreboardRosterRow(row, info, rowIndex)
     self:ApplyRowLayout(row)
 end
 
+local function GetPlayerScoreFactionIndex(count)
+    if not (_G.C_PvP and _G.C_PvP.GetScoreInfo) then return nil end
+
+    local playerFull, playerBase = SafeUnitFullName("player")
+    if not playerFull and not playerBase then return nil end
+
+    for i = 1, count do
+        local okInfo, info = pcall(_G.C_PvP.GetScoreInfo, i)
+        if okInfo and type(info) == "table" then
+            local rowFull, rowBase = SafeNameKeysFromRaw(info.name)
+
+            if (playerFull and rowFull == playerFull)
+                or (playerBase and rowBase == playerBase)
+                or (playerBase and rowFull == playerBase)
+            then
+                return NormalizeFactionIndex(info.faction)
+            end
+        end
+    end
+
+    return nil
+end
+
+local function LegacyTalentSpecForScoreIndex(index)
+    if not _G.GetBattlefieldScore then return nil end
+
+    local ok, specName = pcall(function()
+        return select(17, _G.GetBattlefieldScore(index))
+    end)
+
+    return ok and SafeNonEmptyString(specName) or nil
+end
+
 function BGE:SeedRosterFromScoreboard()
     if not GetSetting("bgeEnabled", true) then return end
     if not IsInPVPInstance() then return end
@@ -1600,48 +1633,35 @@ function BGE:SeedRosterFromScoreboard()
     self:RequestScoreboardData()
     self:EnsureScoreboardFeed()
 
-    local enemyFaction = GetEnemyFactionIndex()
-    if enemyFaction == nil then return end
-
     local okCount, count = pcall(_G.GetNumBattlefieldScores)
     count = okCount and tonumber(SafeToString(count)) or 0
     if count <= 0 then return end
 
-    local enemies = {}
-	for i = 1, count do
-		local okInfo, info = pcall(_G.C_PvP.GetScoreInfo, i)
-		if not okInfo or type(info) ~= "table" then
-			info = {}
-		end
-	
-		if _G.GetBattlefieldScore then
-            local okLegacy, nameL, _, _, _, factionL, rankL, raceL, _, classTokenL, _, _, _, _, _, _, specNameL = pcall(_G.GetBattlefieldScore, i)
-			if okLegacy then
-				if not SafeNonEmptyString(info.name) and type(nameL) ~= "nil" then
-					info.name = nameL
-				end
-				if not SafeNonEmptyString(info.classToken) and type(classTokenL) ~= "nil" then
-					info.classToken = classTokenL
-				end
-				if not SafeNonEmptyString(info.raceName) and type(raceL) ~= "nil" then
-					info.raceName = raceL
-				end
-				if not SafeNonEmptyString(info.talentSpec) and type(specNameL) ~= "nil" then
-					info.talentSpec = specNameL
-				end
+    local playerScoreFaction = GetPlayerScoreFactionIndex(count)
+    if playerScoreFaction == nil then
+        DPrint("SCOREBOARD_NO_PLAYER_FACTION", "scoreboard seed skipped; player scoreboard faction unavailable")
+        return
+    end
 
-				if not SafeNonEmptyString(info.honorLevel) and type(rankL) ~= "nil" then
-					info.honorLevel = rankL
-				end
-			end
-		end
-	
-		local faction = NormalizeFactionIndex(info.faction)
-		local classToken = SafeNonEmptyString(info.classToken)
-		if faction == enemyFaction and classToken and type(info.name) ~= "nil" then
-			enemies[#enemies + 1] = info
-		end
-	end
+    local enemies = {}
+    for i = 1, count do
+        local okInfo, info = pcall(_G.C_PvP.GetScoreInfo, i)
+        if okInfo and type(info) == "table" then
+            local faction = NormalizeFactionIndex(info.faction)
+            local classToken = SafeNonEmptyString(info.classToken)
+
+            if faction ~= nil and faction ~= playerScoreFaction and classToken and type(info.name) ~= "nil" then
+                if not SafeNonEmptyString(info.talentSpec) then
+                    local legacySpec = LegacyTalentSpecForScoreIndex(i)
+                    if legacySpec then
+                        info.talentSpec = legacySpec
+                    end
+                end
+
+                enemies[#enemies + 1] = info
+            end
+        end
+    end
 
     local enemyCount = #enemies
     if enemyCount <= 0 then return end
@@ -1662,7 +1682,6 @@ function BGE:SeedRosterFromScoreboard()
     DPrint("SCOREBOARD_SEED", "seeded " .. tostring(enemyCount) .. " enemy rows from scoreboard")
     self:UpdateRowVisibilities()
 end
-
 
 function BGE:GetRowForPlateUnit(unit)
     if not unit or not SafeUnitExists(unit) or not SafeUnitIsEnemyPlayer(unit) then return nil end
