@@ -1495,7 +1495,19 @@ function BGE:ApplyScoreboardRosterRow(row, info, rowIndex)
     local classToken = SafeNonEmptyString(info.classToken)
     local raceName = SafeNonEmptyString(info.raceName)
     local specName = SafeNonEmptyString(info.talentSpec)
-    local role = ScoreboardRoleToRole(info.roleAssigned) or RoleFromSpecName(specName, classToken)
+	if not specName and _G.GetBattlefieldScore then
+		local scoreIndex = tonumber(SafeToString(info._scoreIndex))
+		if scoreIndex then
+			local okLegacy, legacySpec = pcall(function()
+				return select(17, _G.GetBattlefieldScore(scoreIndex))
+			end)
+			if okLegacy then
+				specName = SafeNonEmptyString(legacySpec)
+			end
+		end
+	end
+	
+	local role = ScoreboardRoleToRole(info.roleAssigned) or RoleFromSpecName(specName, classToken)
 
     if row.unit then
         local activeClass = select(2, SafeUnitClass(row.unit))
@@ -1590,39 +1602,6 @@ function BGE:ApplyScoreboardRosterRow(row, info, rowIndex)
     self:ApplyRowLayout(row)
 end
 
-local function GetPlayerScoreFactionIndex(count)
-    if not (_G.C_PvP and _G.C_PvP.GetScoreInfo) then return nil end
-
-    local playerFull, playerBase = SafeUnitFullName("player")
-    if not playerFull and not playerBase then return nil end
-
-    for i = 1, count do
-        local okInfo, info = pcall(_G.C_PvP.GetScoreInfo, i)
-        if okInfo and type(info) == "table" then
-            local rowFull, rowBase = SafeNameKeysFromRaw(info.name)
-
-            if (playerFull and rowFull == playerFull)
-                or (playerBase and rowBase == playerBase)
-                or (playerBase and rowFull == playerBase)
-            then
-                return NormalizeFactionIndex(info.faction)
-            end
-        end
-    end
-
-    return nil
-end
-
-local function LegacyTalentSpecForScoreIndex(index)
-    if not _G.GetBattlefieldScore then return nil end
-
-    local ok, specName = pcall(function()
-        return select(17, _G.GetBattlefieldScore(index))
-    end)
-
-    return ok and SafeNonEmptyString(specName) or nil
-end
-
 function BGE:SeedRosterFromScoreboard()
     if not GetSetting("bgeEnabled", true) then return end
     if not IsInPVPInstance() then return end
@@ -1633,15 +1612,12 @@ function BGE:SeedRosterFromScoreboard()
     self:RequestScoreboardData()
     self:EnsureScoreboardFeed()
 
+    local enemyFaction = GetEnemyFactionIndex()
+    if enemyFaction == nil then return end
+
     local okCount, count = pcall(_G.GetNumBattlefieldScores)
     count = okCount and tonumber(SafeToString(count)) or 0
     if count <= 0 then return end
-
-    local playerScoreFaction = GetPlayerScoreFactionIndex(count)
-    if playerScoreFaction == nil then
-        DPrint("SCOREBOARD_NO_PLAYER_FACTION", "scoreboard seed skipped; player scoreboard faction unavailable")
-        return
-    end
 
     local enemies = {}
     for i = 1, count do
@@ -1650,14 +1626,8 @@ function BGE:SeedRosterFromScoreboard()
             local faction = NormalizeFactionIndex(info.faction)
             local classToken = SafeNonEmptyString(info.classToken)
 
-            if faction ~= nil and faction ~= playerScoreFaction and classToken and type(info.name) ~= "nil" then
-                if not SafeNonEmptyString(info.talentSpec) then
-                    local legacySpec = LegacyTalentSpecForScoreIndex(i)
-                    if legacySpec then
-                        info.talentSpec = legacySpec
-                    end
-                end
-
+            if faction == enemyFaction and classToken and type(info.name) ~= "nil" then
+                info._scoreIndex = i
                 enemies[#enemies + 1] = info
             end
         end
