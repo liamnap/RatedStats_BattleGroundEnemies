@@ -585,69 +585,17 @@ local function ScoreboardRoleToRole(roleAssigned)
 end
 
 local SPEC_ROLE_BY_NAME = {
-    ["Blood"] = "TANK",
-    ["Frost"] = "DAMAGER",
-    ["Unholy"] = "DAMAGER",
+    BLOOD = "TANK",
+    VENGEANCE = "TANK",
+    GUARDIAN = "TANK",
+    BREWMASTER = "TANK",
+    PROTECTION = "TANK",
 
-    ["Havoc"] = "DAMAGER",
-    ["Vengeance"] = "TANK",
-
-    ["Balance"] = "DAMAGER",
-    ["Feral"] = "DAMAGER",
-    ["Guardian"] = "TANK",
-    ["Restoration"] = "HEALER",
-
-    ["Devastation"] = "DAMAGER",
-    ["Preservation"] = "HEALER",
-    ["Augmentation"] = "DAMAGER",
-
-    ["Beast Mastery"] = "DAMAGER",
-    ["Marksmanship"] = "DAMAGER",
-    ["Survival"] = "DAMAGER",
-
-    ["Arcane"] = "DAMAGER",
-    ["Fire"] = "DAMAGER",
-
-    ["Brewmaster"] = "TANK",
-    ["Mistweaver"] = "HEALER",
-    ["Windwalker"] = "DAMAGER",
-
-    ["Holy"] = "HEALER",
-    ["Protection"] = "TANK",
-    ["Retribution"] = "DAMAGER",
-
-    ["Discipline"] = "HEALER",
-    ["Shadow"] = "DAMAGER",
-
-    ["Assassination"] = "DAMAGER",
-    ["Outlaw"] = "DAMAGER",
-    ["Subtlety"] = "DAMAGER",
-
-    ["Elemental"] = "DAMAGER",
-    ["Enhancement"] = "DAMAGER",
-
-    ["Affliction"] = "DAMAGER",
-    ["Demonology"] = "DAMAGER",
-    ["Destruction"] = "DAMAGER",
-
-    ["Arms"] = "DAMAGER",
-    ["Fury"] = "DAMAGER",
-}
-
-local SPEC_ROLE_BY_CLASS = {
-    DEATHKNIGHT = { Blood = "TANK", Frost = "DAMAGER", Unholy = "DAMAGER" },
-    DEMONHUNTER = { Havoc = "DAMAGER", Vengeance = "TANK" },
-    DRUID = { Balance = "DAMAGER", Feral = "DAMAGER", Guardian = "TANK", Restoration = "HEALER" },
-    EVOKER = { Devastation = "DAMAGER", Preservation = "HEALER", Augmentation = "DAMAGER" },
-    HUNTER = { ["Beast Mastery"] = "DAMAGER", Marksmanship = "DAMAGER", Survival = "DAMAGER" },
-    MAGE = { Arcane = "DAMAGER", Fire = "DAMAGER", Frost = "DAMAGER" },
-    MONK = { Brewmaster = "TANK", Mistweaver = "HEALER", Windwalker = "DAMAGER" },
-    PALADIN = { Holy = "HEALER", Protection = "TANK", Retribution = "DAMAGER" },
-    PRIEST = { Discipline = "HEALER", Holy = "HEALER", Shadow = "DAMAGER" },
-    ROGUE = { Assassination = "DAMAGER", Outlaw = "DAMAGER", Subtlety = "DAMAGER" },
-    SHAMAN = { Elemental = "DAMAGER", Enhancement = "DAMAGER", Restoration = "HEALER" },
-    WARLOCK = { Affliction = "DAMAGER", Demonology = "DAMAGER", Destruction = "DAMAGER" },
-    WARRIOR = { Arms = "DAMAGER", Fury = "DAMAGER", Protection = "TANK" },
+    RESTORATION = "HEALER",
+    PRESERVATION = "HEALER",
+    MISTWEAVER = "HEALER",
+    HOLY = "HEALER",
+    DISCIPLINE = "HEALER",
 }
 
 local function RoleFromSpecName(specName, classToken)
@@ -660,20 +608,7 @@ local function RoleFromSpecName(specName, classToken)
     end)
     if not okKey or type(key) ~= "string" then return nil end
 
-    local byClass = classToken and SPEC_ROLE_BY_CLASS[classToken]
-    if byClass then
-        for spec, role in pairs(byClass) do
-            local okSpec, specKey = pcall(function() return tostring(spec):upper() end)
-            if okSpec and specKey == key then return role end
-        end
-    end
-
-    for spec, role in pairs(SPEC_ROLE_BY_NAME) do
-        local okSpec, specKey = pcall(function() return tostring(spec):upper() end)
-        if okSpec and specKey == key then return role end
-    end
-
-    return nil
+    return SPEC_ROLE_BY_NAME[key] or "DAMAGER"
 end
 
 local function SetRoleTexture(tex, role)
