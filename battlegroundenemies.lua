@@ -1615,7 +1615,7 @@ function BGE:SeedRosterFromScoreboard()
 		end
 	
 		if _G.GetBattlefieldScore then
-			local okLegacy, nameL, _, _, _, _, factionL, rankL, raceL, _, classTokenL, _, _, _, _, _, specNameL = pcall(_G.GetBattlefieldScore, i)
+            local okLegacy, nameL, _, _, _, factionL, rankL, raceL, _, classTokenL, _, _, _, _, _, _, specNameL = pcall(_G.GetBattlefieldScore, i)
 			if okLegacy then
 				if not SafeNonEmptyString(info.name) and type(nameL) ~= "nil" then
 					info.name = nameL
@@ -1629,7 +1629,9 @@ function BGE:SeedRosterFromScoreboard()
 				if not SafeNonEmptyString(info.talentSpec) and type(specNameL) ~= "nil" then
 					info.talentSpec = specNameL
 				end
-				if NormalizeFactionIndex(info.faction) == nil and type(factionL) ~= "nil" then
+				-- Only use legacy faction if C_PvP did not give a readable faction.
+				-- This must be the real 6th GetBattlefieldScore return, not rank.
+				if NormalizeFactionIndex(info.faction) == nil and NormalizeFactionIndex(factionL) ~= nil then
 					info.faction = factionL
 				end
 				if not SafeNonEmptyString(info.honorLevel) and type(rankL) ~= "nil" then
