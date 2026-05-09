@@ -571,19 +571,46 @@ end
 
 local function SafePercentFromStatusBarFill(sb)
     if not sb or not sb.GetWidth or not sb.GetStatusBarTexture then return nil end
+
     local okW, w = pcall(sb.GetWidth, sb)
     w = okW and SafeNumber(w) or nil
     if not w or w <= 0 then return nil end
 
     local okTex, tex = pcall(sb.GetStatusBarTexture, sb)
-    if not okTex or not tex or not tex.GetWidth then return nil end
-    local okTW, tw = pcall(tex.GetWidth, tex)
-    tw = okTW and SafeNumber(tw) or nil
-    if not tw then return nil end
+    if not okTex or not tex then return nil end
 
-    local okP, pct = pcall(function() return math.floor((tw / w) * 100 + 0.5) end)
+    local fillW = nil
+
+    if tex.GetLeft and tex.GetRight then
+        local okL, left = pcall(tex.GetLeft, tex)
+        local okR, right = pcall(tex.GetRight, tex)
+        left = okL and SafeNumber(left) or nil
+        right = okR and SafeNumber(right) or nil
+
+        if left and right then
+            local okCalc, v = pcall(function() return math.abs(right - left) end)
+            if okCalc and type(v) == "number" and (not _G.issecretvalue or not _G.issecretvalue(v)) then
+                fillW = v
+            end
+        end
+    end
+
+    if not fillW and tex.GetWidth then
+        local okTW, tw = pcall(tex.GetWidth, tex)
+        fillW = okTW and SafeNumber(tw) or nil
+    end
+
+    if not fillW then return nil end
+
+    local okP, pct = pcall(function() return math.floor((fillW / w) * 100 + 0.5) end)
     if not okP or type(pct) ~= "number" then return nil end
-    if pct < 0 then pct = 0 elseif pct > 100 then pct = 100 end
+
+    if pct < 0 then
+        pct = 0
+    elseif pct > 100 then
+        pct = 100
+    end
+
     return pct
 end
 
@@ -1528,11 +1555,13 @@ function BGE:ApplyScoreboardRosterRow(row, info, rowIndex)
     UpdateRoleDisplay(row)
 
     row.bg:SetColorTexture(0, 0, 0, 0.35)
-    if row.classFile then
-        row.hp:SetMinMaxValues(0, 1)
-        if not row._hasLiveHP then row.hp:SetValue(1) end
-        ApplyClassAlpha(row, CLASS_ALPHA_ACTIVE)
-    end
+	if row.classFile then
+		if not row._hasLiveHP then
+			row.hp:SetMinMaxValues(0, 1)
+			row.hp:SetValue(1)
+		end
+		ApplyClassAlpha(row, CLASS_ALPHA_ACTIVE)
+	end
     if not row._hasLiveHP and not row._dead then
         row.hpText:SetText("")
     end
@@ -1998,19 +2027,34 @@ function BGE:UpdatePower(row, unit)
             end
         end
 
-        if _G.UnitPower and _G.UnitPowerMax then
-            local okCur, v
-            local okMax, m
-            if powerType ~= nil then
-                okCur, v = pcall(_G.UnitPower, unit, powerType)
-                okMax, m = pcall(_G.UnitPowerMax, unit, powerType)
-            else
-                okCur, v = pcall(_G.UnitPower, unit)
-                okMax, m = pcall(_G.UnitPowerMax, unit)
-            end
-            cur = okCur and SafeNumber(v) or nil
-            maxv = okMax and SafeNumber(m) or nil
-        end
+		if _G.UnitPower and _G.UnitPowerMax then
+			local okCur, v
+			local okMax, m
+			local powerDebugType = powerType
+			local powerDebugToken = powerToken
+		
+			if powerType ~= nil then
+				okCur, v = pcall(_G.UnitPower, unit, powerType)
+				okMax, m = pcall(_G.UnitPowerMax, unit, powerType)
+			else
+				okCur, v = pcall(_G.UnitPower, unit)
+				okMax, m = pcall(_G.UnitPowerMax, unit)
+			end
+		
+			DPrint(
+				"PWR_API:" .. tostring(unit),
+				"power api unit=" .. DbgValue(unit)
+				.. " type=" .. DbgValue(powerDebugType)
+				.. " token=" .. DbgValue(powerDebugToken)
+				.. " okCur=" .. Bool01(okCur)
+				.. " cur=" .. DbgValue(v)
+				.. " okMax=" .. Bool01(okMax)
+				.. " max=" .. DbgValue(m)
+			)
+		
+			cur = okCur and SafeNumber(v) or nil
+			maxv = okMax and SafeNumber(m) or nil
+		end
     end
 
     if not cur or not maxv or maxv <= 0 then
