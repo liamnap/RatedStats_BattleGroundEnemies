@@ -1629,11 +1629,7 @@ function BGE:SeedRosterFromScoreboard()
 				if not SafeNonEmptyString(info.talentSpec) and type(specNameL) ~= "nil" then
 					info.talentSpec = specNameL
 				end
-				-- Only use legacy faction if C_PvP did not give a readable faction.
-				-- This must be the real 6th GetBattlefieldScore return, not rank.
-				if NormalizeFactionIndex(info.faction) == nil and NormalizeFactionIndex(factionL) ~= nil then
-					info.faction = factionL
-				end
+
 				if not SafeNonEmptyString(info.honorLevel) and type(rankL) ~= "nil" then
 					info.honorLevel = rankL
 				end
