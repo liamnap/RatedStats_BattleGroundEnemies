@@ -1705,7 +1705,7 @@ function BGE:GetRowForPlateUnit(unit)
     local want = self:GetLayoutRowCount()
 
     -- Scoreboard rows already know the roster. Attach live nameplates to those rows first.
-    -- Race is used when available; otherwise take the first unbound same-class row, matching BGEFixed's practical fallback.
+    -- Race is used when available; otherwise take the first unbound same-class row
     if classFile then
         for i = 1, want do
             local row = self.rows[i]
