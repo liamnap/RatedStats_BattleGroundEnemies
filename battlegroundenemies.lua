@@ -405,10 +405,29 @@ local function FindNamePlateUnitFrameChild(plate)
 end
 
 local function SafePlateFrame(unit)
-    if not (_G.C_NamePlate and _G.C_NamePlate.GetNamePlateForUnit) then return nil, nil end
+    local plate = nil
 
-    local ok, plate = pcall(_G.C_NamePlate.GetNamePlateForUnit, unit)
-    if not ok or not plate then return nil, nil end
+    if _G.NamePlateDriverFrame and _G.NamePlateDriverFrame.GetNamePlateForUnit then
+        local okDriver, driverPlate = pcall(_G.NamePlateDriverFrame.GetNamePlateForUnit, _G.NamePlateDriverFrame, unit)
+        if okDriver and driverPlate then
+            plate = driverPlate
+        end
+    end
+
+    if not plate and _G.C_NamePlate and _G.C_NamePlate.GetNamePlateForUnit then
+        local secure = false
+        if _G.issecure then
+            local okSecure, isSecure = pcall(_G.issecure)
+            secure = okSecure and isSecure or false
+        end
+
+        local okC, cPlate = pcall(_G.C_NamePlate.GetNamePlateForUnit, unit, secure)
+        if okC and cPlate then
+            plate = cPlate
+        end
+    end
+
+    if not plate then return nil, nil end
 
     local uf = SafeFrameField(plate, "UnitFrame") or SafeFrameField(plate, "unitFrame")
     if not uf then
@@ -1449,7 +1468,7 @@ function BGE:ApplyScoreboardRosterRow(row, info, rowIndex)
     local classToken = SafeNonEmptyString(info.classToken)
     local raceName = SafeNonEmptyString(info.raceName)
     local specName = SafeNonEmptyString(info.talentSpec)
-    local role = ScoreboardRoleToRole(info.roleAssigned) or RoleFromSpecName(specName, classToken) or row.role
+    local role = ScoreboardRoleToRole(info.roleAssigned) or RoleFromSpecName(specName, classToken)
 
     if row.unit then
         local activeClass = select(2, SafeUnitClass(row.unit))
@@ -1560,16 +1579,42 @@ function BGE:SeedRosterFromScoreboard()
     if count <= 0 then return end
 
     local enemies = {}
-    for i = 1, count do
-        local okInfo, info = pcall(_G.C_PvP.GetScoreInfo, i)
-        if okInfo and type(info) == "table" then
-            local faction = NormalizeFactionIndex(info.faction)
-            local classToken = SafeNonEmptyString(info.classToken)
-            if faction == enemyFaction and classToken and type(info.name) ~= "nil" then
-                enemies[#enemies + 1] = info
-            end
-        end
-    end
+	for i = 1, count do
+		local okInfo, info = pcall(_G.C_PvP.GetScoreInfo, i)
+		if not okInfo or type(info) ~= "table" then
+			info = {}
+		end
+	
+		if _G.GetBattlefieldScore then
+			local okLegacy, nameL, _, _, _, _, factionL, rankL, raceL, _, classTokenL, _, _, _, _, _, specNameL = pcall(_G.GetBattlefieldScore, i)
+			if okLegacy then
+				if not SafeNonEmptyString(info.name) and type(nameL) ~= "nil" then
+					info.name = nameL
+				end
+				if not SafeNonEmptyString(info.classToken) and type(classTokenL) ~= "nil" then
+					info.classToken = classTokenL
+				end
+				if not SafeNonEmptyString(info.raceName) and type(raceL) ~= "nil" then
+					info.raceName = raceL
+				end
+				if not SafeNonEmptyString(info.talentSpec) and type(specNameL) ~= "nil" then
+					info.talentSpec = specNameL
+				end
+				if NormalizeFactionIndex(info.faction) == nil and type(factionL) ~= "nil" then
+					info.faction = factionL
+				end
+				if not SafeNonEmptyString(info.honorLevel) and type(rankL) ~= "nil" then
+					info.honorLevel = rankL
+				end
+			end
+		end
+	
+		local faction = NormalizeFactionIndex(info.faction)
+		local classToken = SafeNonEmptyString(info.classToken)
+		if faction == enemyFaction and classToken and type(info.name) ~= "nil" then
+			enemies[#enemies + 1] = info
+		end
+	end
 
     local enemyCount = #enemies
     if enemyCount <= 0 then return end
@@ -1764,11 +1809,9 @@ function BGE:UpdateIdentity(row, unit)
     if type(displayText) ~= "nil" then row.displayText = displayText end
     if classFile then row.classFile = classFile end
 
-    if not row.role then
-        local role, specName = ScoreboardRoleForUnit(unit)
-        if role then row.role = role end
-        if specName then row.specName = specName end
-    end
+    local role, specName = ScoreboardRoleForUnit(unit)
+    if role then row.role = role end
+    if specName then row.specName = specName end
 
     local hasKeyIdentity = guid or keyFull or keyBase
 
