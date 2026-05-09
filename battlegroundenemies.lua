@@ -1506,7 +1506,7 @@ function BGE:ApplyScoreboardRosterRow(row, info, rowIndex)
 			end
 		end
 	end
-	
+
 	local role = ScoreboardRoleToRole(info.roleAssigned) or RoleFromSpecName(specName, classToken)
 
     if row.unit then
