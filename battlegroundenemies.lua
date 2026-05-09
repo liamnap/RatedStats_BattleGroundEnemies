@@ -1485,7 +1485,7 @@ function BGE:EnsureScoreboardFeed()
     return false
 end
 
-function BGE:ApplyScoreboardRosterRow(row, info, rowIndex)
+function BGE:ApplyScoreboardRosterRow(row, info, rowIndex, scoreIndex)
     if not row or type(info) ~= "table" then return end
 
     local rawName = info.name
@@ -1496,7 +1496,7 @@ function BGE:ApplyScoreboardRosterRow(row, info, rowIndex)
     local raceName = SafeNonEmptyString(info.raceName)
     local specName = SafeNonEmptyString(info.talentSpec)
 	if not specName and _G.GetBattlefieldScore then
-		local scoreIndex = tonumber(SafeToString(info._scoreIndex))
+		scoreIndex = tonumber(SafeToString(scoreIndex))
 		if scoreIndex then
 			local okLegacy, legacySpec = pcall(function()
 				return select(17, _G.GetBattlefieldScore(scoreIndex))
@@ -1626,10 +1626,12 @@ function BGE:SeedRosterFromScoreboard()
             local faction = NormalizeFactionIndex(info.faction)
             local classToken = SafeNonEmptyString(info.classToken)
 
-            if faction == enemyFaction and classToken and type(info.name) ~= "nil" then
-                info._scoreIndex = i
-                enemies[#enemies + 1] = info
-            end
+			if faction == enemyFaction and classToken and type(info.name) ~= "nil" then
+				enemies[#enemies + 1] = {
+					info = info,
+					scoreIndex = i,
+				}
+			end
         end
     end
 
@@ -1641,12 +1643,13 @@ function BGE:SeedRosterFromScoreboard()
 
     self:PrimeRosterSlots()
 
-    for i = 1, enemyCount do
-        local row = self.rows[i]
-        if row then
-            self:ApplyScoreboardRosterRow(row, enemies[i], i)
-        end
-    end
+	for i = 1, enemyCount do
+		local row = self.rows[i]
+		local enemy = enemies[i]
+		if row and enemy then
+			self:ApplyScoreboardRosterRow(row, enemy.info, i, enemy.scoreIndex)
+		end
+	end
 
     self._scoreboardSeeded = true
     DPrint("SCOREBOARD_SEED", "seeded " .. tostring(enemyCount) .. " enemy rows from scoreboard")
