@@ -464,7 +464,7 @@ local function FindPlatePowerStatusBar(unit)
     end
     local sb = FindStatusBar(uf.PowerBarsContainer)
     if sb then return sb end
-    return FindStatusBar(uf, uf.healthBar or uf.HealthBar)
+    return nil
 end
 
 local function SafePercentFromStatusBarFill(sb)
@@ -542,6 +542,7 @@ end
 
 local function FormatHealthText(cur, maxv, mode)
     cur, maxv = SafeNumber(cur), SafeNumber(maxv)
+    mode = tonumber(SafeToString(mode)) or 1
     if not cur or not maxv or maxv <= 0 then return nil end
     if mode == 2 then
         return tostring(math.floor(cur + 0.5)) .. "/" .. tostring(math.floor(maxv + 0.5))
@@ -654,11 +655,25 @@ local function RoleFromSpecName(specName, classToken)
 
     local s = SafeNonEmptyString(specName)
     if not s then return nil end
+    local okKey, key = pcall(function()
+        return s:gsub("_", " "):gsub("%s+", " "):gsub("^%s+", ""):gsub("%s+$", ""):upper()
+    end)
+    if not okKey or type(key) ~= "string" then return nil end
 
     local byClass = classToken and SPEC_ROLE_BY_CLASS[classToken]
-    if byClass and byClass[s] then return byClass[s] end
+    if byClass then
+        for spec, role in pairs(byClass) do
+            local okSpec, specKey = pcall(function() return tostring(spec):upper() end)
+            if okSpec and specKey == key then return role end
+        end
+    end
 
-    return SPEC_ROLE_BY_NAME[s]
+    for spec, role in pairs(SPEC_ROLE_BY_NAME) do
+        local okSpec, specKey = pcall(function() return tostring(spec):upper() end)
+        if okSpec and specKey == key then return role end
+    end
+
+    return nil
 end
 
 local function SetRoleTexture(tex, role)
@@ -1134,6 +1149,7 @@ local function MakeRow(parent, index)
     row._hpSB = nil
     row._pwrSB = nil
     row._barsUnit = nil
+    row._hasLiveHP = false
 
     row:HookScript("OnEnter", function()
         local bge = _G.RSTATS_BGE
@@ -1255,6 +1271,7 @@ function BGE:PrimeRosterSlots()
                     row._placeholder = true
                     row._outOfRange = false
                     row._preview = false
+                    row._hasLiveHP = false
                     row.nameText:SetText("Enemy " .. tostring(i))
                     row.hpText:SetText("")
                     row.specText:SetText("")
@@ -1330,7 +1347,7 @@ function BGE:ApplyScoreboardRosterRow(row, info, rowIndex)
     local classToken = SafeNonEmptyString(info.classToken)
     local raceName = SafeNonEmptyString(info.raceName)
     local specName = SafeNonEmptyString(info.talentSpec)
-    local role = ScoreboardRoleToRole(info.roleAssigned) or RoleFromSpecName(info.talentSpec, classToken)
+    local role = ScoreboardRoleToRole(info.roleAssigned) or RoleFromSpecName(info.talentSpec, classToken) or row.role
 
     if row.unit then
         local activeClass = select(2, SafeUnitClass(row.unit))
@@ -1345,6 +1362,7 @@ function BGE:ApplyScoreboardRosterRow(row, info, rowIndex)
             row._hpSB = nil
             row._pwrSB = nil
             row._barsUnit = nil
+            row._hasLiveHP = false
         end
     end
 
@@ -1702,6 +1720,7 @@ function BGE:UpdateHealth(row, unit)
         row.hp:SetValue(0)
         row.hpText:SetText("DEAD")
         row._dead = true
+        row._hasLiveHP = true
         UpdateNameClipToHPFill(row)
         return
     end
@@ -1714,35 +1733,49 @@ function BGE:UpdateHealth(row, unit)
         row._pwrSB = nil
         sb = nil
     end
-    if sb == nil then
+    if sb == nil or sb == false then
         sb = FindPlateHealthStatusBar(unit)
-        row._hpSB = sb or false
-    elseif sb == false then
-        sb = nil
+        row._hpSB = sb
     end
 
     local cur, maxv = SafeStatusBarValues(sb)
+    local pct = nil
     if cur and maxv then
         pcall(row.hp.SetMinMaxValues, row.hp, 0, maxv)
         pcall(row.hp.SetValue, row.hp, cur)
+        row._hasLiveHP = true
+    else
+        pct = SafePercentFromStatusBarFill(sb)
+        if pct then
+            row.hp:SetMinMaxValues(0, 100)
+            row.hp:SetValue(pct)
+            row._hasLiveHP = true
+        end
     end
 
-    local txt = nil
     local mode = GetSetting("bgeHealthTextMode", 2)
-    if sb then
-        if mode ~= 3 then
+    local txt = nil
+    if cur and maxv then
+        txt = FormatHealthText(cur, maxv, mode)
+    end
+
+    if not txt and sb then
+        mode = tonumber(SafeToString(mode)) or 1
+        if mode == 3 then
+            pct = pct or SafePercentFromStatusBarFill(sb)
+            if pct then txt = tostring(pct) .. "%" end
+        else
             txt = SafePlateHealthNumericText(sb)
         end
-        if not txt and cur and maxv then
-            txt = FormatHealthText(cur, maxv, mode)
-        end
-        if not txt then
-            local pct = SafePercentFromStatusBarFill(sb)
-            if pct then txt = tostring(pct) .. "%" end
-        end
     end
 
-    if txt then row.hpText:SetText(txt) end
+    if not txt then
+        pct = pct or SafePercentFromStatusBarFill(sb)
+        if pct then txt = tostring(pct) .. "%" end
+    end
+
+    row.hpText:SetText(txt or "")
+
     UpdateNameClipToHPFill(row)
 end
 
@@ -1766,20 +1799,51 @@ function BGE:UpdatePower(row, unit)
         row._pwrSB = nil
         sb = nil
     end
-    if sb == nil then
+    if sb == nil or sb == false then
         sb = FindPlatePowerStatusBar(unit)
-        row._pwrSB = sb or false
-    elseif sb == false then
-        sb = nil
+        row._pwrSB = sb
     end
 
     local cur, maxv = SafeStatusBarValues(sb)
+    local r, g, b = ColorFromStatusBar(sb, 0, 0.55, 1)
     if not cur or not maxv then
+        local powerType, powerToken = nil, nil
+        if _G.UnitPowerType then
+            local okType, pType, pToken = pcall(_G.UnitPowerType, unit)
+            powerType = okType and SafeNumber(pType) or nil
+            powerToken = okType and SafeNonEmptyString(pToken) or nil
+
+            local info = nil
+            if _G.PowerBarColor then
+                info = (powerToken and _G.PowerBarColor[powerToken]) or (powerType and _G.PowerBarColor[powerType])
+            end
+            if info then
+                r = SafeNumber(info.r) or r
+                g = SafeNumber(info.g) or g
+                b = SafeNumber(info.b) or b
+            end
+        end
+
+        if _G.UnitPower and _G.UnitPowerMax then
+            local okCur, v
+            local okMax, m
+            if powerType ~= nil then
+                okCur, v = pcall(_G.UnitPower, unit, powerType)
+                okMax, m = pcall(_G.UnitPowerMax, unit, powerType)
+            else
+                okCur, v = pcall(_G.UnitPower, unit)
+                okMax, m = pcall(_G.UnitPowerMax, unit)
+            end
+            cur = okCur and SafeNumber(v) or nil
+            maxv = okMax and SafeNumber(m) or nil
+        end
+    end
+
+    if not cur or not maxv or maxv <= 0 then
         row.power:Hide()
         return
     end
 
-    local r, g, b = ColorFromStatusBar(sb, 0, 0.55, 1)
     row.power:SetMinMaxValues(0, maxv)
     row.power:SetValue(cur)
     row.power:SetStatusBarColor(r, g, b, 0.9)
