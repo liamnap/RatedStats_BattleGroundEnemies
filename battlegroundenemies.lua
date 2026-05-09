@@ -491,7 +491,7 @@ local function SafePlateHealthNumericText(sb)
     if not fs or not fs.GetText then return nil end
     local okT, t = pcall(fs.GetText, fs)
     if not okT then return nil end
-    return SafeNonEmptyString(t)
+    return t
 end
 
 local function ColorFromStatusBar(sb, fallbackR, fallbackG, fallbackB)
@@ -648,6 +648,44 @@ local function SetRoleTexture(tex, role)
 
     tex:Hide()
     return false
+end
+
+local function RoleDisplayText(role)
+    role = NormalizeRole(role)
+    if role == "DAMAGER" then return "DPS" end
+    return role
+end
+
+local function UpdateRoleDisplay(row)
+    if not row then return end
+
+    local role = NormalizeRole(row.role)
+    if role then
+        row.role = role
+        SetRoleTexture(row.roleIcon, role)
+        row.specText:SetText(RoleDisplayText(role) or "")
+        row.specText:Show()
+    else
+        row.roleIcon:Hide()
+        row.specText:SetText("")
+        row.specText:Hide()
+    end
+end
+
+local function ScoreboardRoleForUnit(unit)
+    if not unit or not _G.C_PvP or not _G.C_PvP.GetScoreInfoByPlayerGuid then return nil, nil end
+
+    local guid = SafeUnitGUID(unit)
+    if not guid then return nil, nil end
+
+    local okInfo, info = pcall(_G.C_PvP.GetScoreInfoByPlayerGuid, guid)
+    if not okInfo or type(info) ~= "table" then return nil, nil end
+
+    local classToken = SafeNonEmptyString(info.classToken)
+    local specName = SafeNonEmptyString(info.talentSpec)
+    local role = ScoreboardRoleToRole(info.roleAssigned) or RoleFromSpecName(specName, classToken)
+
+    return role, specName
 end
 
 local function GetPlayerDB()
@@ -1279,10 +1317,11 @@ function BGE:ApplyScoreboardRosterRow(row, info, rowIndex)
     local rawName = info.name
     local displayText = DisplayNameFromRawName(rawName)
     local keyFull, keyBase = SafeNameKeysFromRaw(rawName)
+    local guid = SafeNonEmptyString(info.guid)
     local classToken = SafeNonEmptyString(info.classToken)
     local raceName = SafeNonEmptyString(info.raceName)
     local specName = SafeNonEmptyString(info.talentSpec)
-    local role = ScoreboardRoleToRole(info.roleAssigned) or RoleFromSpecName(info.talentSpec, classToken) or row.role
+    local role = ScoreboardRoleToRole(info.roleAssigned) or RoleFromSpecName(specName, classToken) or row.role
 
     if row.unit then
         local activeClass = select(2, SafeUnitClass(row.unit))
@@ -1301,6 +1340,7 @@ function BGE:ApplyScoreboardRosterRow(row, info, rowIndex)
         end
     end
 
+    if guid then row.guid = guid end
     if keyFull then row.displayName = keyFull end
     if keyFull then row.fullName = keyFull end
     if keyBase then row.name = keyBase end
@@ -1326,13 +1366,7 @@ function BGE:ApplyScoreboardRosterRow(row, info, rowIndex)
         row.nameText:SetText("Enemy " .. tostring(rowIndex or row.index or ""))
     end
 
-    row.specText:SetText("")
-
-    if row.role then
-        SetRoleTexture(row.roleIcon, row.role)
-    else
-        row.roleIcon:Hide()
-    end
+    UpdateRoleDisplay(row)
 
     row.bg:SetColorTexture(0, 0, 0, 0.35)
     if row.classFile then
@@ -1590,6 +1624,12 @@ function BGE:UpdateIdentity(row, unit)
     if type(displayText) ~= "nil" then row.displayText = displayText end
     if classFile then row.classFile = classFile end
 
+    if not row.role then
+        local role, specName = ScoreboardRoleForUnit(unit)
+        if role then row.role = role end
+        if specName then row.specName = specName end
+    end
+
     local hasKeyIdentity = guid or keyFull or keyBase
 
     if type(row.displayText) ~= "nil" then
@@ -1616,12 +1656,7 @@ function BGE:UpdateIdentity(row, unit)
     row.bg:SetColorTexture(0, 0, 0, 0.35)
     ApplyClassAlpha(row, row._outOfRange and CLASS_ALPHA_OOR or CLASS_ALPHA_ACTIVE)
 
-    if row.role then
-        SetRoleTexture(row.roleIcon, row.role)
-    else
-        row.roleIcon:Hide()
-    end
-    row.specText:SetText("")
+    UpdateRoleDisplay(row)
 
     local hadIcon = row.achievIconTex
     if hasKeyIdentity and row.achievIconTex == nil then
@@ -2313,11 +2348,15 @@ function BGE:ApplyRowLayout(row)
     row.hpText:SetJustifyH("CENTER")
     if row.hpText.SetDrawLayer then row.hpText:SetDrawLayer("OVERLAY", 7) end
 
+    local roleTextW = 38
     row.specText:ClearAllPoints()
-    row.specText:SetText("")
-    row.specText:Hide()
+    row.specText:SetPoint("RIGHT", row.hp, "RIGHT", -rightInset, 0)
+    row.specText:SetWidth(roleTextW)
+    row.specText:SetJustifyH("RIGHT")
+    if row.specText.SetDrawLayer then row.specText:SetDrawLayer("OVERLAY", 7) end
+    UpdateRoleDisplay(row)
 
-    local nameMax = w - (leftInset + rightInset + roleSize + namePad + iconOffset + (border * 2))
+    local nameMax = w - (leftInset + rightInset + roleSize + namePad + iconOffset + roleTextW + (border * 2))
     row.nameText:SetWidth(math.max(20, nameMax))
 
     if row.hpText.GetFont and row.hpText.SetFont then
