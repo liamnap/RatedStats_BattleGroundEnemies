@@ -217,6 +217,22 @@ local function SafeUnitGUID(unit)
     return SafeNonEmptyString(guid)
 end
 
+local function SafeFrameField(frame, key)
+    if not frame or not key then return nil end
+    local ok, value = pcall(function() return frame[key] end)
+    if not ok then return nil end
+    return value
+end
+
+local function IsStatusBarFrame(frame)
+    if not frame then return false end
+    if frame.GetObjectType then
+        local ok, objectType = pcall(frame.GetObjectType, frame)
+        if ok and objectType == "StatusBar" then return true end
+    end
+    return frame.GetValue and frame.GetMinMaxValues and frame.SetValue and frame.SetMinMaxValues
+end
+
 local function SafeUnitName(unit)
     if not unit then return nil, nil end
     local ok, name, realm = pcall(UnitName, unit)
@@ -371,7 +387,9 @@ local function SafePlateFrame(unit)
     if not (_G.C_NamePlate and _G.C_NamePlate.GetNamePlateForUnit) then return nil, nil end
     local ok, plate = pcall(_G.C_NamePlate.GetNamePlateForUnit, unit)
     if not ok or not plate then return nil, nil end
-    return plate, plate.UnitFrame
+
+    local uf = SafeFrameField(plate, "UnitFrame") or SafeFrameField(plate, "unitFrame")
+    return plate, uf
 end
 
 local function GetNameplateDisplayNames(unit)
@@ -457,41 +475,48 @@ end
 local function FindPlateHealthStatusBar(unit)
     local _, uf = SafePlateFrame(unit)
     if not uf then return nil end
+
+    local healthBarsContainer = SafeFrameField(uf, "HealthBarsContainer")
+    local healthBar = SafeFrameField(healthBarsContainer, "healthBar")
+
     local candidates = {
-        uf.healthBar,
-        uf.HealthBar,
-        (uf.HealthBarsContainer and uf.HealthBarsContainer.healthBar),
-        (uf.healthBar and uf.healthBar.bar),
-        (uf.healthBar and uf.healthBar.healthBar),
+        healthBar,
+        SafeFrameField(uf, "healthBar"),
+        SafeFrameField(uf, "HealthBar"),
+        SafeFrameField(SafeFrameField(uf, "healthBar"), "bar"),
+        SafeFrameField(SafeFrameField(uf, "healthBar"), "healthBar"),
     }
+
     for i = 1, #candidates do
         local sb = candidates[i]
-        local cur, maxv = SafeStatusBarValues(sb)
-        if cur and maxv then return sb end
+        if IsStatusBarFrame(sb) then return sb end
     end
-    return FindStatusBar(uf)
+
+    return FindStatusBar(healthBarsContainer) or FindStatusBar(uf)
 end
 
 local function FindPlatePowerStatusBar(unit)
     local _, uf = SafePlateFrame(unit)
     if not uf then return nil end
+
+    local powerBarsContainer = SafeFrameField(uf, "PowerBarsContainer")
+
     local candidates = {
-        uf.manabar,
-        uf.manaBar,
-        uf.powerBar,
-        uf.PowerBar,
-        (uf.PowerBarsContainer and uf.PowerBarsContainer.powerBar),
-        (uf.manabar and uf.manabar.bar),
-        (uf.powerBar and uf.powerBar.bar),
+        SafeFrameField(uf, "manabar"),
+        SafeFrameField(uf, "manaBar"),
+        SafeFrameField(uf, "powerBar"),
+        SafeFrameField(uf, "PowerBar"),
+        SafeFrameField(powerBarsContainer, "powerBar"),
+        SafeFrameField(SafeFrameField(uf, "manabar"), "bar"),
+        SafeFrameField(SafeFrameField(uf, "powerBar"), "bar"),
     }
+
     for i = 1, #candidates do
         local sb = candidates[i]
-        local cur, maxv = SafeStatusBarValues(sb)
-        if cur and maxv then return sb end
+        if IsStatusBarFrame(sb) then return sb end
     end
-    local sb = FindStatusBar(uf.PowerBarsContainer)
-    if sb then return sb end
-    return nil
+
+    return FindStatusBar(powerBarsContainer)
 end
 
 local function SafePercentFromStatusBarFill(sb)
@@ -590,10 +615,21 @@ local function NormalizeRole(role)
 end
 
 local function ScoreboardRoleToRole(roleAssigned)
-    if type(roleAssigned) == "nil" or IsSecretValue(roleAssigned) then return nil end
+    if type(roleAssigned) == "nil" then return nil end
 
     local direct = NormalizeRole(roleAssigned)
     if direct then return direct end
+
+    local okTank, isTank = pcall(function() return roleAssigned == 2 end)
+    if okTank and isTank then return "TANK" end
+
+    local okHealer, isHealer = pcall(function() return roleAssigned == 4 end)
+    if okHealer and isHealer then return "HEALER" end
+
+    local okDamager, isDamager = pcall(function() return roleAssigned == 8 end)
+    if okDamager and isDamager then return "DAMAGER" end
+
+    if IsSecretValue(roleAssigned) then return nil end
 
     local n
     if type(roleAssigned) == "number" then
@@ -603,12 +639,22 @@ local function ScoreboardRoleToRole(roleAssigned)
         n = s and tonumber(s) or nil
     end
 
-    -- Blizzard PVPMatchTable.lua explicitly checks 4 as LFG_ROLE_FLAG_HEALER.
-    -- Standard LFG role flags are 2=TANK, 4=HEALER, 8=DAMAGE.
     if n == 2 then return "TANK" end
     if n == 4 then return "HEALER" end
     if n == 8 then return "DAMAGER" end
     return nil
+end
+
+local function ScoreboardRoleDebug(roleAssigned)
+    if type(roleAssigned) == "nil" then return "nil" end
+
+    local ok2, is2 = pcall(function() return roleAssigned == 2 end)
+    local ok4, is4 = pcall(function() return roleAssigned == 4 end)
+    local ok8, is8 = pcall(function() return roleAssigned == 8 end)
+
+    return "2=" .. (ok2 and Bool01(is2) or "err")
+        .. "/4=" .. (ok4 and Bool01(is4) or "err")
+        .. "/8=" .. (ok8 and Bool01(is8) or "err")
 end
 
 local SPEC_ROLE_BY_NAME = {
@@ -1385,6 +1431,7 @@ function BGE:ApplyScoreboardRosterRow(row, info, rowIndex)
         .. " class=" .. DbgValue(classToken)
         .. " spec=" .. DbgValue(specName)
         .. " assigned=" .. DbgValue(info.roleAssigned)
+        .. " cmp=" .. ScoreboardRoleDebug(info.roleAssigned)
         .. " finalRole=" .. DbgValue(row.role)
     )
 
@@ -1784,6 +1831,10 @@ function BGE:UpdateHealth(row, unit)
 
     row.hpText:SetText(txt or "")
 
+    local dbgPlate, dbgUF = SafePlateFrame(unit)
+    local dbgHBC = SafeFrameField(dbgUF, "HealthBarsContainer")
+    local dbgHB = SafeFrameField(dbgHBC, "healthBar")
+
     DPrint(
         "HP:" .. tostring(unit),
         "hp unit=" .. DbgValue(unit)
@@ -1795,6 +1846,10 @@ function BGE:UpdateHealth(row, unit)
         .. " txt=" .. DbgValue(txt)
         .. " mode=" .. DbgValue(mode)
         .. " hasLiveHP=" .. Bool01(row._hasLiveHP)
+        .. " plate=" .. DbgFrameName(dbgPlate)
+        .. " uf=" .. DbgFrameName(dbgUF)
+        .. " hbc=" .. DbgFrameName(dbgHBC)
+        .. " hb=" .. DbgFrameName(dbgHB)
     )
 
     UpdateNameClipToHPFill(row)
@@ -1861,7 +1916,20 @@ function BGE:UpdatePower(row, unit)
     end
 
     if not cur or not maxv or maxv <= 0 then
+        local pct = SafePercentFromStatusBarFill(sb)
+        if pct then
+            row.power:SetMinMaxValues(0, 100)
+            row.power:SetValue(pct)
+            row.power:SetStatusBarColor(r, g, b, 0.9)
+            row.power:Show()
+            return
+        end
+
         row.power:Hide()
+
+        local dbgPlate, dbgUF = SafePlateFrame(unit)
+        local dbgPBC = SafeFrameField(dbgUF, "PowerBarsContainer")
+
         DPrint(
             "PWR:" .. tostring(unit),
             "power unit=" .. DbgValue(unit)
@@ -1870,6 +1938,9 @@ function BGE:UpdatePower(row, unit)
             .. " cur=" .. DbgValue(cur)
             .. " max=" .. DbgValue(maxv)
             .. " shown=0"
+            .. " plate=" .. DbgFrameName(dbgPlate)
+            .. " uf=" .. DbgFrameName(dbgUF)
+            .. " pbc=" .. DbgFrameName(dbgPBC)
         )
         return
     end
