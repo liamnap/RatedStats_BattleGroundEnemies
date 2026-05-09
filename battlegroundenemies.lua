@@ -1982,6 +1982,50 @@ function BGE:UpdateHealth(row, unit)
     UpdateNameClipToHPFill(row)
 end
 
+local function SafeUnitPowerPercent(unit)
+    if not unit or not _G.UnitPowerPercent then return nil, 0, 0.55, 1, nil, nil end
+
+    local powerType, powerToken = nil, nil
+    if _G.UnitPowerType then
+        local okType, pType, pToken = pcall(_G.UnitPowerType, unit)
+        powerType = okType and SafeNumber(pType) or nil
+        powerToken = okType and SafeNonEmptyString(pToken) or nil
+    end
+
+    local r, g, b = 0, 0.55, 1
+    if _G.PowerBarColor then
+        local info = (powerToken and _G.PowerBarColor[powerToken]) or (powerType and _G.PowerBarColor[powerType])
+        if info then
+            r = SafeNumber(info.r) or r
+            g = SafeNumber(info.g) or g
+            b = SafeNumber(info.b) or b
+        end
+    end
+
+    local okPct, pct
+    if powerType ~= nil then
+        okPct, pct = pcall(_G.UnitPowerPercent, unit, powerType, false)
+    else
+        okPct, pct = pcall(_G.UnitPowerPercent, unit)
+    end
+
+    pct = okPct and SafeNumber(pct) or nil
+    if not pct then return nil, r, g, b, powerType, powerToken end
+
+    -- Guard both possible styles: 0..1 fraction or 0..100 percentage.
+    if pct <= 1 then
+        pct = pct * 100
+    end
+
+    if pct < 0 then
+        pct = 0
+    elseif pct > 100 then
+        pct = 100
+    end
+
+    return pct, r, g, b, powerType, powerToken
+end
+
 function BGE:UpdatePower(row, unit)
     if not row then return end
     if not GetSetting("bgeShowPower", true) then
@@ -2009,52 +2053,22 @@ function BGE:UpdatePower(row, unit)
 
     local cur, maxv = SafeStatusBarValues(sb)
     local r, g, b = ColorFromStatusBar(sb, 0, 0.55, 1)
-    if not cur or not maxv then
-        local powerType, powerToken = nil, nil
-        if _G.UnitPowerType then
-            local okType, pType, pToken = pcall(_G.UnitPowerType, unit)
-            powerType = okType and SafeNumber(pType) or nil
-            powerToken = okType and SafeNonEmptyString(pToken) or nil
+    local pctFromAPI, powerType, powerToken = nil, nil, nil
 
-            local info = nil
-            if _G.PowerBarColor then
-                info = (powerToken and _G.PowerBarColor[powerToken]) or (powerType and _G.PowerBarColor[powerType])
-            end
-            if info then
-                r = SafeNumber(info.r) or r
-                g = SafeNumber(info.g) or g
-                b = SafeNumber(info.b) or b
-            end
+    if not cur or not maxv then
+        pctFromAPI, r, g, b, powerType, powerToken = SafeUnitPowerPercent(unit)
+        if pctFromAPI then
+            cur = pctFromAPI
+            maxv = 100
         end
 
-		if _G.UnitPower and _G.UnitPowerMax then
-			local okCur, v
-			local okMax, m
-			local powerDebugType = powerType
-			local powerDebugToken = powerToken
-		
-			if powerType ~= nil then
-				okCur, v = pcall(_G.UnitPower, unit, powerType)
-				okMax, m = pcall(_G.UnitPowerMax, unit, powerType)
-			else
-				okCur, v = pcall(_G.UnitPower, unit)
-				okMax, m = pcall(_G.UnitPowerMax, unit)
-			end
-		
-			DPrint(
-				"PWR_API:" .. tostring(unit),
-				"power api unit=" .. DbgValue(unit)
-				.. " type=" .. DbgValue(powerDebugType)
-				.. " token=" .. DbgValue(powerDebugToken)
-				.. " okCur=" .. Bool01(okCur)
-				.. " cur=" .. DbgValue(v)
-				.. " okMax=" .. Bool01(okMax)
-				.. " max=" .. DbgValue(m)
-			)
-		
-			cur = okCur and SafeNumber(v) or nil
-			maxv = okMax and SafeNumber(m) or nil
-		end
+        DPrint(
+            "PWR_API:" .. tostring(unit),
+            "power percent api unit=" .. DbgValue(unit)
+            .. " type=" .. DbgValue(powerType)
+            .. " token=" .. DbgValue(powerToken)
+            .. " pct=" .. DbgValue(pctFromAPI)
+        )
     end
 
     if not cur or not maxv or maxv <= 0 then
@@ -2079,6 +2093,7 @@ function BGE:UpdatePower(row, unit)
             .. " sb=" .. DbgFrameName(sb)
             .. " cur=" .. DbgValue(cur)
             .. " max=" .. DbgValue(maxv)
+            .. " pctAPI=" .. DbgValue(pctFromAPI)
             .. " shown=0"
             .. " plate=" .. DbgFrameName(dbgPlate)
             .. " uf=" .. DbgFrameName(dbgUF)
@@ -2099,6 +2114,7 @@ function BGE:UpdatePower(row, unit)
         .. " sb=" .. DbgFrameName(sb)
         .. " cur=" .. DbgValue(cur)
         .. " max=" .. DbgValue(maxv)
+        .. " pctAPI=" .. DbgValue(pctFromAPI)
         .. " shown=1"
     )
 end
