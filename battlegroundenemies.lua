@@ -143,6 +143,33 @@ local function DPrint(key, msg)
     print("|cffb69e86[RSTATS-BGE]|r " .. msg)
 end
 
+local function DbgValue(v)
+    if type(v) == "nil" then return "nil" end
+    if IsSecretValue(v) then return "<secret>" end
+    local ok, s = pcall(function() return tostring(v) end)
+    if not ok or type(s) ~= "string" then return "<" .. type(v) .. ">" end
+    if #s > 80 then return s:sub(1, 80) .. "..." end
+    return s
+end
+
+local function DbgFrameName(frame)
+    if not frame then return "nil" end
+
+    if frame.GetName then
+        local ok, name = pcall(frame.GetName, frame)
+        name = ok and SafeNonEmptyString(name) or nil
+        if name then return name end
+    end
+
+    if frame.GetObjectType then
+        local ok, objectType = pcall(frame.GetObjectType, frame)
+        objectType = ok and SafeNonEmptyString(objectType) or nil
+        if objectType then return objectType end
+    end
+
+    return "<frame>"
+end
+
 local function SafeUnitExists(unit)
     if not unit then return false end
     local ok, exists = pcall(UnitExists, unit)
@@ -1350,6 +1377,17 @@ function BGE:ApplyScoreboardRosterRow(row, info, rowIndex)
     row.role = role
     row.specName = specName
 
+    DPrint(
+        "ROLE_SEED:" .. tostring(rowIndex or row.index or "?"),
+        "role seed row=" .. DbgValue(rowIndex or row.index)
+        .. " name=" .. DbgValue(keyFull or keyBase or rawName)
+        .. " guid=" .. DbgValue(guid)
+        .. " class=" .. DbgValue(classToken)
+        .. " spec=" .. DbgValue(specName)
+        .. " assigned=" .. DbgValue(info.roleAssigned)
+        .. " finalRole=" .. DbgValue(row.role)
+    )
+
     row._scoreboardSeen = true
     row._seenIdentity = true
     row._placeholder = false
@@ -1746,6 +1784,19 @@ function BGE:UpdateHealth(row, unit)
 
     row.hpText:SetText(txt or "")
 
+    DPrint(
+        "HP:" .. tostring(unit),
+        "hp unit=" .. DbgValue(unit)
+        .. " row=" .. DbgValue(row.index)
+        .. " sb=" .. DbgFrameName(sb)
+        .. " cur=" .. DbgValue(cur)
+        .. " max=" .. DbgValue(maxv)
+        .. " pct=" .. DbgValue(pct)
+        .. " txt=" .. DbgValue(txt)
+        .. " mode=" .. DbgValue(mode)
+        .. " hasLiveHP=" .. Bool01(row._hasLiveHP)
+    )
+
     UpdateNameClipToHPFill(row)
 end
 
@@ -1811,6 +1862,15 @@ function BGE:UpdatePower(row, unit)
 
     if not cur or not maxv or maxv <= 0 then
         row.power:Hide()
+        DPrint(
+            "PWR:" .. tostring(unit),
+            "power unit=" .. DbgValue(unit)
+            .. " row=" .. DbgValue(row.index)
+            .. " sb=" .. DbgFrameName(sb)
+            .. " cur=" .. DbgValue(cur)
+            .. " max=" .. DbgValue(maxv)
+            .. " shown=0"
+        )
         return
     end
 
@@ -1818,6 +1878,16 @@ function BGE:UpdatePower(row, unit)
     row.power:SetValue(cur)
     row.power:SetStatusBarColor(r, g, b, 0.9)
     row.power:Show()
+
+    DPrint(
+        "PWR:" .. tostring(unit),
+        "power unit=" .. DbgValue(unit)
+        .. " row=" .. DbgValue(row.index)
+        .. " sb=" .. DbgFrameName(sb)
+        .. " cur=" .. DbgValue(cur)
+        .. " max=" .. DbgValue(maxv)
+        .. " shown=1"
+    )
 end
 
 function BGE:GetRowForExternalUnit(unit)
@@ -1896,8 +1966,18 @@ function BGE:HandlePlateAdded(unit)
     self:UpdatePower(row, unit)
     ApplyClassAlpha(row, CLASS_ALPHA_ACTIVE)
 
-    DPrint("PLATE_ADD:" .. unit, "bound enemy " .. unit .. " keyedName=" .. tostring(row.name or row.displayName or "nil") .. " display=" .. (type(row.displayText) ~= "nil" and "yes" or "no") .. " class=" .. tostring(row.classFile or "nil"))
-
+    DPrint(
+        "PLATE_ADD:" .. tostring(unit),
+        "plate unit=" .. DbgValue(unit)
+        .. " row=" .. DbgValue(row.index)
+        .. " guid=" .. DbgValue(row.guid)
+        .. " name=" .. DbgValue(row.displayName or row.name)
+        .. " class=" .. DbgValue(row.classFile)
+        .. " role=" .. DbgValue(row.role)
+        .. " hpSB=" .. DbgFrameName(row._hpSB)
+        .. " pwrSB=" .. DbgFrameName(row._pwrSB)
+    )
+    
     self:UpdateRowVisibilities()
     self:SyncSelectedRowToTarget()
 end
@@ -2840,6 +2920,9 @@ SlashCmdList["RSTBGE"] = function(msg)
             return
         end
         db.settings.bgeDebug = not db.settings.bgeDebug
+        if _G.RSTATS_BGE then
+            _G.RSTATS_BGE._dbgLast = {}
+        end
         print("Rated Stats - Battleground Enemies: Debug " .. (db.settings.bgeDebug and "ON" or "OFF"))
         return
     end
