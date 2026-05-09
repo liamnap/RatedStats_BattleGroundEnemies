@@ -383,12 +383,38 @@ local function GetUnitTrueFactionIndex(unit)
     return idx
 end
 
+local function FindNamePlateUnitFrameChild(plate)
+    if not plate or not plate.GetChildren then return nil end
+
+    local okKids, kids = pcall(function() return { plate:GetChildren() } end)
+    if not okKids or type(kids) ~= "table" then return nil end
+
+    for i = 1, #kids do
+        local child = kids[i]
+        if child then
+            if SafeFrameField(child, "HealthBarsContainer")
+                or SafeFrameField(child, "healthBar")
+                or SafeFrameField(child, "name")
+            then
+                return child
+            end
+        end
+    end
+
+    return nil
+end
+
 local function SafePlateFrame(unit)
     if not (_G.C_NamePlate and _G.C_NamePlate.GetNamePlateForUnit) then return nil, nil end
+
     local ok, plate = pcall(_G.C_NamePlate.GetNamePlateForUnit, unit)
     if not ok or not plate then return nil, nil end
 
     local uf = SafeFrameField(plate, "UnitFrame") or SafeFrameField(plate, "unitFrame")
+    if not uf then
+        uf = FindNamePlateUnitFrameChild(plate)
+    end
+
     return plate, uf
 end
 
@@ -458,17 +484,22 @@ end
 
 local function FindStatusBar(parent, skip)
     if not (parent and parent.GetChildren) then return nil end
-    local kids = { parent:GetChildren() }
+
+    local okKids, kids = pcall(function() return { parent:GetChildren() } end)
+    if not okKids or type(kids) ~= "table" then return nil end
+
     for i = 1, #kids do
         local k = kids[i]
-        if k and k.GetObjectType then
-            local okOT, ot = pcall(k.GetObjectType, k)
-            if okOT and ot == "StatusBar" and k ~= skip then
-                local cur, maxv = SafeStatusBarValues(k)
-                if cur and maxv then return k end
+        if k and k ~= skip then
+            if IsStatusBarFrame(k) then
+                return k
             end
+
+            local nested = FindStatusBar(k, skip)
+            if nested then return nested end
         end
     end
+
     return nil
 end
 
@@ -752,11 +783,35 @@ local function ScoreboardRoleForUnit(unit)
     if not guid then return nil, nil end
 
     local okInfo, info = pcall(_G.C_PvP.GetScoreInfoByPlayerGuid, guid)
-    if not okInfo or type(info) ~= "table" then return nil, nil end
+    if not okInfo or type(info) ~= "table" then
+        DPrint(
+            "ROLE_GUID:" .. tostring(guid),
+            "role guid unit=" .. DbgValue(unit)
+            .. " guid=" .. DbgValue(guid)
+            .. " okInfo=" .. Bool01(okInfo)
+            .. " infoType=" .. DbgValue(type(info))
+        )
+        return nil, nil
+    end
 
     local classToken = SafeNonEmptyString(info.classToken)
     local specName = SafeNonEmptyString(info.talentSpec)
-    local role = ScoreboardRoleToRole(info.roleAssigned) or RoleFromSpecName(specName, classToken)
+    local assignedRole = ScoreboardRoleToRole(info.roleAssigned)
+    local specRole = RoleFromSpecName(specName, classToken)
+    local role = assignedRole or specRole
+
+    DPrint(
+        "ROLE_GUID:" .. tostring(guid),
+        "role guid unit=" .. DbgValue(unit)
+        .. " guid=" .. DbgValue(guid)
+        .. " class=" .. DbgValue(classToken)
+        .. " spec=" .. DbgValue(specName)
+        .. " assigned=" .. DbgValue(info.roleAssigned)
+        .. " cmp=" .. ScoreboardRoleDebug(info.roleAssigned)
+        .. " assignedRole=" .. DbgValue(assignedRole)
+        .. " specRole=" .. DbgValue(specRole)
+        .. " finalRole=" .. DbgValue(role)
+    )
 
     return role, specName
 end
