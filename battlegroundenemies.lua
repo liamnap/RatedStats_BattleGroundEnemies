@@ -796,12 +796,6 @@ local function SetRoleTexture(tex, role)
     return false
 end
 
-local function RoleDisplayText(role)
-    role = NormalizeRole(role)
-    if role == "DAMAGER" then return "DPS" end
-    return role
-end
-
 local function UpdateRoleDisplay(row)
     if not row then return end
 
