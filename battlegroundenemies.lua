@@ -1492,11 +1492,12 @@ function BGE:ApplyScoreboardRosterRow(row, info, rowIndex, scoreIndex)
 	if not specName and _G.GetBattlefieldScore then
 		scoreIndex = tonumber(SafeToString(scoreIndex))
 		if scoreIndex then
-			local okLegacy, legacySpec = pcall(function()
-				return select(17, _G.GetBattlefieldScore(scoreIndex))
+			local okLegacy, legacySpec16, legacySpec17 = pcall(function()
+				local _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, talentSpec, maybeTalentSpec = _G.GetBattlefieldScore(scoreIndex)
+				return talentSpec, maybeTalentSpec
 			end)
 			if okLegacy then
-				specName = SafeNonEmptyString(legacySpec)
+				specName = SafeNonEmptyString(legacySpec16) or SafeNonEmptyString(legacySpec17)
 			end
 		end
 	end
