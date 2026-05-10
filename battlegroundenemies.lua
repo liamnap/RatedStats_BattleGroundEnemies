@@ -1502,6 +1502,10 @@ function BGE:ApplyScoreboardRosterRow(row, info, rowIndex, scoreIndex)
 	end
 
 	local role = ScoreboardRoleToRole(info.roleAssigned) or RoleFromSpecName(specName, classToken)
+    local sameIdentity =
+        (guid and row.guid == guid)
+        or (keyFull and (row.displayName == keyFull or row.fullName == keyFull))
+        or (keyBase and row.name == keyBase)
 
     if row.unit then
         local activeClass = select(2, SafeUnitClass(row.unit))
@@ -1527,8 +1531,12 @@ function BGE:ApplyScoreboardRosterRow(row, info, rowIndex, scoreIndex)
     if type(displayText) ~= "nil" then row.displayText = displayText end
     if classToken then row.classFile = classToken end
     if raceName then row.raceName = raceName end
-    row.role = role
-    row.specName = specName
+    if role or not sameIdentity then
+        row.role = role
+    end
+    if specName or not sameIdentity then
+        row.specName = specName
+    end
 
     DPrint(
         "ROLE_SEED:" .. tostring(rowIndex or row.index or "?"),
@@ -1637,16 +1645,30 @@ function BGE:SeedRosterFromScoreboard()
 
     self:PrimeRosterSlots()
 
+    local roleCount = 0
+    local specCount = 0
 	for i = 1, enemyCount do
 		local row = self.rows[i]
 		local enemy = enemies[i]
 		if row and enemy then
 			self:ApplyScoreboardRosterRow(row, enemy.info, i, enemy.scoreIndex)
+            if row.role then roleCount = roleCount + 1 end
+            if row.specName then specCount = specCount + 1 end
 		end
 	end
 
+    self._scoreboardRoleCount = roleCount
+    self._scoreboardSpecCount = specCount
+
     self._scoreboardSeeded = true
-    DPrint("SCOREBOARD_SEED", "seeded " .. tostring(enemyCount) .. " enemy rows from scoreboard")
+    DPrint(
+        "SCOREBOARD_SEED",
+        "seeded " .. tostring(enemyCount)
+        .. " enemy rows from scoreboard roles="
+        .. tostring(roleCount)
+        .. " specs="
+        .. tostring(specCount)
+    )
     self:UpdateRowVisibilities()
 end
 
@@ -2959,6 +2981,8 @@ evt:SetScript("OnEvent", function(_, event, arg1)
 
             BGE._scoreboardSeeded = false
             BGE._scoreboardEnemyCount = nil
+            BGE._scoreboardRoleCount = nil
+            BGE._scoreboardSpecCount = nil
             BGE:RequestScoreboardData()
 
             local function TryStartupScoreboard()
@@ -2974,7 +2998,9 @@ evt:SetScript("OnEvent", function(_, event, arg1)
 
                 local expected = tonumber(bge:ResolveExpectedRows()) or 10
                 local have = tonumber(bge._scoreboardEnemyCount) or 0
-                if have >= expected then return end
+                local roles = tonumber(bge._scoreboardRoleCount) or 0
+                local roleNeed = math.min(have, expected)
+                if have >= expected and roles >= roleNeed then return end
 
                 attempts = attempts + 1
 
@@ -2984,9 +3010,29 @@ evt:SetScript("OnEvent", function(_, event, arg1)
                 bge:UpdateRowVisibilities()
 
                 have = tonumber(bge._scoreboardEnemyCount) or 0
-                if have < expected and attempts < 30 then
+                roles = tonumber(bge._scoreboardRoleCount) or 0
+                local specs = tonumber(bge._scoreboardSpecCount) or 0
+                roleNeed = math.min(have, expected)
+
+                DPrint(
+                    "STARTUP_SEED_RETRY",
+                    "startup seed attempt="
+                    .. tostring(attempts)
+                    .. " have="
+                    .. tostring(have)
+                    .. "/"
+                    .. tostring(expected)
+                    .. " roles="
+                    .. tostring(roles)
+                    .. "/"
+                    .. tostring(roleNeed)
+                    .. " specs="
+                    .. tostring(specs)
+                )
+
+                if (have < expected or roles < roleNeed) and attempts < 60 then
                     bge:RequestScoreboardData()
-                    C_Timer.After(1, TryStartupScoreboard)
+                    C_Timer.After(0.5, TryStartupScoreboard)
                 end
             end
 
