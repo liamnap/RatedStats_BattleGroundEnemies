@@ -812,9 +812,13 @@ local function UpdateRoleDisplay(row)
     local role = NormalizeRole(row.role)
     if role then
         row.role = role
-        SetRoleTexture(row.roleIcon, role)
-        row.specText:SetText(RoleDisplayText(role) or "")
-        row.specText:Show()
+        if SetRoleTexture(row.roleIcon, role) then
+            row.roleIcon:Show()
+        else
+            row.roleIcon:Hide()
+        end
+        row.specText:SetText("")
+        row.specText:Hide()
     else
         row.roleIcon:Hide()
         row.specText:SetText("")
@@ -2613,6 +2617,7 @@ function BGE:ApplyRowLayout(row)
     row.roleIcon:ClearAllPoints()
     row.roleIcon:SetSize(roleSize, roleSize)
     row.roleIcon:SetPoint("TOPLEFT", row.hp, "TOPLEFT", leftInset, 0)
+    if row.roleIcon.SetDrawLayer then row.roleIcon:SetDrawLayer("OVERLAY", 7) end
 
     local iconTex = row.achievIconTex
     local iconSize = 8
