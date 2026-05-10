@@ -1605,6 +1605,7 @@ end
 function BGE:SeedRosterFromScoreboard()
     if not GetSetting("bgeEnabled", true) then return end
     if not IsInPVPInstance() then return end
+    if self:IsMatchStarted() then return end
     if not (_G.C_PvP and _G.C_PvP.GetScoreInfo and _G.GetNumBattlefieldScores) then return end
     if self._scoreboardReasserting then return end
 
@@ -1624,9 +1625,8 @@ function BGE:SeedRosterFromScoreboard()
         local okInfo, info = pcall(_G.C_PvP.GetScoreInfo, i)
         if okInfo and type(info) == "table" then
             local faction = NormalizeFactionIndex(info.faction)
-            local classToken = SafeNonEmptyString(info.classToken)
 
-			if faction == enemyFaction and classToken and type(info.name) ~= "nil" then
+			if faction == enemyFaction and type(info.name) ~= "nil" then
 				enemies[#enemies + 1] = {
 					info = info,
 					scoreIndex = i,
@@ -2946,7 +2946,7 @@ evt:SetScript("OnEvent", function(_, event, arg1)
         return
     end
 
-    if event == "PLAYER_ENTERING_WORLD" or event == "ZONE_CHANGED_NEW_AREA" then
+    if event == "PLAYER_ENTERING_WORLD" or event == "PLAYER_JOINED_PVP_MATCH" or event == "ZONE_CHANGED_NEW_AREA" then
         BGE:UpdateMatchState()
         local inPvp = IsInPVPInstance()
         if inPvp or GetSetting("bgePreview", false) then
@@ -2954,7 +2954,7 @@ evt:SetScript("OnEvent", function(_, event, arg1)
         end
         BGE:ApplySettings()
         local isStartUp = false
-        if event == "PLAYER_ENTERING_WORLD" and inPvp and C_PvP and C_PvP.GetActiveMatchState and Enum and Enum.PvPMatchState then
+        if inPvp and C_PvP and C_PvP.GetActiveMatchState and Enum and Enum.PvPMatchState then
             local ok, state = pcall(C_PvP.GetActiveMatchState)
             isStartUp = ok and state == Enum.PvPMatchState.StartUp
         end
@@ -3024,7 +3024,15 @@ evt:SetScript("OnEvent", function(_, event, arg1)
         return
     end
 
-    if event == "PVP_MATCH_ACTIVE" or event == "PVP_MATCH_COMPLETE" then
+    if event == "PVP_MATCH_ACTIVE" then
+        BGE:UpdateMatchState()
+        BGE:PrimeRosterSlots()
+        BGE:ScanNameplates()
+        BGE:UpdateRowVisibilities()
+        return
+    end
+
+    if event == "PVP_MATCH_COMPLETE" then
         BGE:UpdateMatchState()
         BGE:PrimeRosterSlots()
         BGE:SeedRosterFromScoreboard()
