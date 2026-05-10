@@ -771,29 +771,25 @@ local function SetRoleTexture(tex, role)
     if tex.SetAtlas and _G.GetMicroIconForRole then
         local okAtlas, atlas = pcall(_G.GetMicroIconForRole, role)
         if okAtlas and type(atlas) == "string" then
-            local okSet = pcall(tex.SetAtlas, tex, atlas, true)
-            if okSet then
-                tex:SetTexCoord(0, 1, 0, 1)
-                tex:Show()
-                return true
+            if _G.C_Texture and _G.C_Texture.GetAtlasInfo then
+                local okInfo, info = pcall(_G.C_Texture.GetAtlasInfo, atlas)
+                if okInfo and info then
+                    local okSet = pcall(tex.SetAtlas, tex, atlas, true)
+                    if okSet then
+                        tex:SetTexCoord(0, 1, 0, 1)
+                        tex:Show()
+                        return true
+                    end
+                end
+            else
+                local okSet = pcall(tex.SetAtlas, tex, atlas, true)
+                if okSet then
+                    tex:SetTexCoord(0, 1, 0, 1)
+                    tex:Show()
+                    return true
+                end
             end
         end
-    end
-
-    local coords = nil
-    if role == "TANK" then
-        coords = { 0, 19 / 64, 22 / 64, 41 / 64 }
-    elseif role == "HEALER" then
-        coords = { 20 / 64, 39 / 64, 1 / 64, 20 / 64 }
-    elseif role == "DAMAGER" then
-        coords = { 20 / 64, 39 / 64, 22 / 64, 41 / 64 }
-    end
-
-    if coords then
-        tex:SetTexture("Interface\\LFGFrame\\UI-LFG-ICON-PORTRAITROLES")
-        tex:SetTexCoord(coords[1], coords[2], coords[3], coords[4])
-        tex:Show()
-        return true
     end
 
     tex:Hide()
@@ -2652,7 +2648,7 @@ function BGE:ApplyRowLayout(row)
     row.hpText:SetJustifyH("CENTER")
     if row.hpText.SetDrawLayer then row.hpText:SetDrawLayer("OVERLAY", 7) end
 
-    local roleTextW = 38
+    local roleTextW = 0
     row.specText:ClearAllPoints()
     row.specText:SetPoint("RIGHT", row.hp, "RIGHT", -rightInset, 0)
     row.specText:SetWidth(roleTextW)
