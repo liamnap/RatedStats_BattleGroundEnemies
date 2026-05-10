@@ -768,27 +768,27 @@ local function SetRoleTexture(tex, role)
         tex:Hide()
         return false
     end
-    if tex.SetAtlas and _G.GetMicroIconForRole then
-        local okAtlas, atlas = pcall(_G.GetMicroIconForRole, role)
-        if okAtlas and type(atlas) == "string" then
-            if _G.C_Texture and _G.C_Texture.GetAtlasInfo then
-                local okInfo, info = pcall(_G.C_Texture.GetAtlasInfo, atlas)
-                if okInfo and info then
-                    local okSet = pcall(tex.SetAtlas, tex, atlas, true)
-                    if okSet then
-                        tex:SetTexCoord(0, 1, 0, 1)
-                        tex:Show()
-                        return true
-                    end
-                end
-            else
-                local okSet = pcall(tex.SetAtlas, tex, atlas, true)
-                if okSet then
-                    tex:SetTexCoord(0, 1, 0, 1)
-                    tex:Show()
-                    return true
-                end
-            end
+
+    local atlas
+    if _G.GetMicroIconForRole then
+        local okAtlas, result = pcall(_G.GetMicroIconForRole, role)
+        if okAtlas and type(result) == "string" then
+            atlas = result
+        end
+    end
+
+    atlas = atlas or ({
+        TANK = "UI-LFG-RoleIcon-Tank-Micro-GroupFinder",
+        HEALER = "UI-LFG-RoleIcon-Healer-Micro-GroupFinder",
+        DAMAGER = "UI-LFG-RoleIcon-DPS-Micro-GroupFinder",
+    })[role]
+
+    if atlas and tex.SetAtlas then
+        local okSet = pcall(tex.SetAtlas, tex, atlas, true)
+        if okSet then
+            tex:SetTexCoord(0, 1, 0, 1)
+            tex:Show()
+            return true
         end
     end
 
