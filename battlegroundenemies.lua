@@ -692,6 +692,13 @@ end
 local function ScoreboardRoleToRole(roleAssigned)
     if type(roleAssigned) == "nil" then return nil end
 
+    if _G.scrubsecretvalues then
+        local ok, clean = pcall(_G.scrubsecretvalues, roleAssigned)
+        if ok then
+            roleAssigned = clean
+        end
+    end
+
     local direct = NormalizeRole(roleAssigned)
     if direct then return direct end
 
@@ -1490,6 +1497,16 @@ function BGE:ApplyScoreboardRosterRow(row, info, rowIndex, scoreIndex)
         if IsSecretValue(info.talentSpec) then
             -- Secret display values can be printed/passed to FontStrings, but cannot be safely compared.
             specDisplay = info.talentSpec
+
+            if _G.scrubsecretvalues then
+                local ok, clean = pcall(_G.scrubsecretvalues, info.talentSpec)
+                if ok then
+                    specName = SafeNonEmptyString(clean)
+                    if specName and type(specDisplay) == "nil" then
+                        specDisplay = specName
+                    end
+                end
+            end
         else
             specName = SafeNonEmptyString(info.talentSpec)
             specDisplay = specName
