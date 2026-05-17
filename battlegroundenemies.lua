@@ -758,7 +758,7 @@ local function RoleFromSpecName(specName, classToken)
     end)
     if not okKey or type(key) ~= "string" then return nil end
 
-    return SPEC_ROLE_BY_NAME[key] or "DAMAGER"
+    return SPEC_ROLE_BY_NAME[key]
 end
 
 local function SetRoleTexture(tex, role)
@@ -849,6 +849,7 @@ local function ScoreboardRoleForUnit(unit)
         .. " rawSpec=" .. DbgValue(info.talentSpec)
         .. " assigned=" .. DbgValue(info.roleAssigned)
         .. " cmp=" .. ScoreboardRoleDebug(info.roleAssigned)
+        .. " assignedRole=" .. DbgValue(assignedRole)
         .. " assignedRole=" .. DbgValue(assignedRole)
         .. " specRole=" .. DbgValue(specRole)
         .. " finalRole=" .. DbgValue(role)
@@ -1533,7 +1534,8 @@ function BGE:ApplyScoreboardRosterRow(row, info, rowIndex, scoreIndex)
 	end
 
     local specRole = RoleFromSpecName(specName, classToken)
-	local role = ScoreboardRoleToRole(info.roleAssigned) or specRole
+	local assignedRole = ScoreboardRoleToRole(info.roleAssigned)
+	local role = specRole or assignedRole
     local sameIdentity =
         (guid and row.guid == guid)
         or (keyFull and (row.displayName == keyFull or row.fullName == keyFull))
