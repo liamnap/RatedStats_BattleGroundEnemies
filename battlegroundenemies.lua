@@ -1553,27 +1553,31 @@ function BGE:ApplyScoreboardRosterRow(row, info, rowIndex, scoreIndex)
         row.specName = specDisplay
     end
 
-    DPrint(
-        "ROLE_SEED:" .. tostring(rowIndex or row.index or "?"),
-        "role seed row=" .. DbgValue(rowIndex or row.index)
-        .. " name=" .. DbgValue(keyFull or keyBase or rawName)
-        .. " guid=" .. DbgValue(guid)
-        .. " class=" .. DbgValue(classToken)
-        .. " spec=" .. DbgValue(specDisplay)
-        .. " specPlain=" .. DbgValue(specName)
-        .. " rawSpec=" .. DbgValue(info.talentSpec)
-        .. " assigned=" .. DbgValue(info.roleAssigned)
-        .. " cmp=" .. ScoreboardRoleDebug(info.roleAssigned)
-        .. " specRole=" .. DbgValue(specRole)
-        .. " finalRole=" .. DbgValue(row.role)
-    )
-
-    if GetSetting("bgeDebug", false) and type(specDisplay) ~= "nil" then
+    if GetSetting("bgeDebug", false) then
         self._debugPrintedSpecs = self._debugPrintedSpecs or {}
+
         local dbgKey = tostring(rowIndex or row.index or "?")
         if not self._debugPrintedSpecs[dbgKey] then
             self._debugPrintedSpecs[dbgKey] = true
-            pcall(print, "|cffb69e86[RSTATS-BGE]|r role seed raw spec row=" .. DbgValue(rowIndex or row.index) .. " spec=", specDisplay)
+
+            print(
+                "|cffb69e86[RSTATS-BGE]|r "
+                .. "role seed row=" .. DbgValue(rowIndex or row.index)
+                .. " name=" .. DbgValue(keyFull or keyBase or rawName)
+                .. " guid=" .. DbgValue(guid)
+                .. " class=" .. DbgValue(classToken)
+                .. " spec=" .. DbgValue(specDisplay)
+                .. " specPlain=" .. DbgValue(specName)
+                .. " rawSpec=" .. DbgValue(info.talentSpec)
+                .. " assigned=" .. DbgValue(info.roleAssigned)
+                .. " cmp=" .. ScoreboardRoleDebug(info.roleAssigned)
+                .. " specRole=" .. DbgValue(specRole)
+                .. " finalRole=" .. DbgValue(row.role)
+            )
+
+            if type(specDisplay) ~= "nil" then
+                pcall(print, "|cffb69e86[RSTATS-BGE]|r role seed raw spec row=" .. DbgValue(rowIndex or row.index) .. " spec=", specDisplay)
+            end
         end
     end
 
@@ -3042,21 +3046,23 @@ evt:SetScript("OnEvent", function(_, event, arg1)
                 local specs = tonumber(bge._scoreboardSpecCount) or 0
                 roleNeed = math.min(have, expected)
 
-                DPrint(
-                    "STARTUP_SEED_RETRY",
-                    "startup seed attempt="
-                    .. tostring(attempts)
-                    .. " have="
-                    .. tostring(have)
-                    .. "/"
-                    .. tostring(expected)
-                    .. " roles="
-                    .. tostring(roles)
-                    .. "/"
-                    .. tostring(roleNeed)
-                    .. " specs="
-                    .. tostring(specs)
-                )
+                if attempts == 1 or attempts == 10 or attempts == 20 or attempts == 30 or attempts == 40 or attempts == 50 or attempts == 60 then
+                    DPrint(
+                        "STARTUP_SEED_RETRY:" .. tostring(attempts),
+                        "startup seed attempt="
+                        .. tostring(attempts)
+                        .. " have="
+                        .. tostring(have)
+                        .. "/"
+                        .. tostring(expected)
+                        .. " roles="
+                        .. tostring(roles)
+                        .. "/"
+                        .. tostring(roleNeed)
+                        .. " specs="
+                        .. tostring(specs)
+                    )
+                end
 
                 if (have < expected or roles < roleNeed) and attempts < 60 then
                     bge:RequestScoreboardData()
