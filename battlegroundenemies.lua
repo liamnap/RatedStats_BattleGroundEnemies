@@ -4,7 +4,7 @@ RSTATS = RSTATS or _G.RSTATS
 -- Rated Stats - Battleground Enemies
 -- 12.0.5 scoreboard-roster + nameplate-live rebuild.
 -- Scoreboard seeds enemy roster rows: name, class, faction, race, and best-effort role.
--- Talent spec may be read only to derive role; it is not displayed on the row.
+-- Talent spec may be displayed directly from scoreboard values; normal string specs may derive role.
 -- Nameplates are used for live binding, health, power, OOR, DEAD state, and class/name fallback.
 -- No enemy inspect path. No scoreboard-driven health/power. No role/spec sorting dependency.
 -- Secret display values may be passed directly to FontStrings, but are not split, compared, or used as table keys.
@@ -1482,7 +1482,20 @@ function BGE:ApplyScoreboardRosterRow(row, info, rowIndex, scoreIndex)
     local guid = SafeNonEmptyString(info.guid)
     local classToken = SafeNonEmptyString(info.classToken)
     local raceName = SafeNonEmptyString(info.raceName)
-    local specName = SafeNonEmptyString(info.talentSpec)
+
+    local specDisplay = nil
+    local specName = nil
+
+    if type(info.talentSpec) ~= "nil" then
+        if IsSecretValue(info.talentSpec) then
+            -- Secret display values can be printed/passed to FontStrings, but cannot be safely compared.
+            specDisplay = info.talentSpec
+        else
+            specName = SafeNonEmptyString(info.talentSpec)
+            specDisplay = specName
+        end
+    end
+
 	if not specName and _G.GetBattlefieldScore then
 		scoreIndex = tonumber(SafeToString(scoreIndex))
 		if scoreIndex then
@@ -1491,12 +1504,19 @@ function BGE:ApplyScoreboardRosterRow(row, info, rowIndex, scoreIndex)
 				return talentSpec, maybeTalentSpec
 			end)
 			if okLegacy then
-				specName = SafeNonEmptyString(legacySpec16) or SafeNonEmptyString(legacySpec17)
+				local legacySpec = SafeNonEmptyString(legacySpec16) or SafeNonEmptyString(legacySpec17)
+                if legacySpec then
+                    specName = legacySpec
+                    if type(specDisplay) == "nil" then
+                        specDisplay = legacySpec
+                    end
+                end
 			end
 		end
 	end
 
-	local role = ScoreboardRoleToRole(info.roleAssigned) or RoleFromSpecName(specName, classToken)
+    local specRole = RoleFromSpecName(specName, classToken)
+	local role = ScoreboardRoleToRole(info.roleAssigned) or specRole
     local sameIdentity =
         (guid and row.guid == guid)
         or (keyFull and (row.displayName == keyFull or row.fullName == keyFull))
@@ -1529,8 +1549,8 @@ function BGE:ApplyScoreboardRosterRow(row, info, rowIndex, scoreIndex)
     if role or not sameIdentity then
         row.role = role
     end
-    if specName or not sameIdentity then
-        row.specName = specName
+    if type(specDisplay) ~= "nil" or not sameIdentity then
+        row.specName = specDisplay
     end
 
     DPrint(
@@ -1539,12 +1559,23 @@ function BGE:ApplyScoreboardRosterRow(row, info, rowIndex, scoreIndex)
         .. " name=" .. DbgValue(keyFull or keyBase or rawName)
         .. " guid=" .. DbgValue(guid)
         .. " class=" .. DbgValue(classToken)
-        .. " spec=" .. DbgValue(specName)
+        .. " spec=" .. DbgValue(specDisplay)
+        .. " specPlain=" .. DbgValue(specName)
         .. " rawSpec=" .. DbgValue(info.talentSpec)
         .. " assigned=" .. DbgValue(info.roleAssigned)
         .. " cmp=" .. ScoreboardRoleDebug(info.roleAssigned)
+        .. " specRole=" .. DbgValue(specRole)
         .. " finalRole=" .. DbgValue(row.role)
     )
+
+    if GetSetting("bgeDebug", false) and type(specDisplay) ~= "nil" then
+        self._debugPrintedSpecs = self._debugPrintedSpecs or {}
+        local dbgKey = tostring(rowIndex or row.index or "?")
+        if not self._debugPrintedSpecs[dbgKey] then
+            self._debugPrintedSpecs[dbgKey] = true
+            pcall(print, "|cffb69e86[RSTATS-BGE]|r role seed raw spec row=" .. DbgValue(rowIndex or row.index) .. " spec=", specDisplay)
+        end
+    end
 
     row._scoreboardSeen = true
     row._seenIdentity = true
@@ -1777,6 +1808,7 @@ end
 function BGE:ClearAllRows()
     self._scoreboardSeeded = false
     self._scoreboardEnemyCount = nil
+    self._debugPrintedSpecs = nil
     wipe(self.rowByUnit)
     wipe(self.rowByGuid)
     wipe(self.rowByDisplayName)
