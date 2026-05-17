@@ -68,7 +68,6 @@ local function IsSecretValue(v)
 end
 
 local function SafeToString(v)
-    if IsSecretValue(v) then return nil end
     local ok, s = pcall(function() return tostring(v) end)
     if not ok or type(s) ~= "string" then return nil end
     if IsSecretValue(s) then return nil end
@@ -76,7 +75,6 @@ local function SafeToString(v)
 end
 
 local function SafeNonEmptyString(v)
-    if IsSecretValue(v) then return nil end
     local s = SafeToString(v)
     if type(s) ~= "string" then return nil end
     local okLen, n = pcall(string.len, s)
@@ -697,41 +695,36 @@ local function ScoreboardRoleToRole(roleAssigned)
     local direct = NormalizeRole(roleAssigned)
     if direct then return direct end
 
-    local okTank, isTank = pcall(function() return roleAssigned == 2 end)
-    if okTank and isTank then return "TANK" end
+    local s = SafeToString(roleAssigned)
+    local n = s and tonumber(s) or nil
 
-    local okHealer, isHealer = pcall(function() return roleAssigned == 4 end)
-    if okHealer and isHealer then return "HEALER" end
-
-    local okDamager, isDamager = pcall(function() return roleAssigned == 8 end)
-    if okDamager and isDamager then return "DAMAGER" end
-
-    if IsSecretValue(roleAssigned) then return nil end
-
-    local n
-    if type(roleAssigned) == "number" then
+    if not n and type(roleAssigned) == "number" and not IsSecretValue(roleAssigned) then
         n = roleAssigned
-    else
-        local s = SafeToString(roleAssigned)
-        n = s and tonumber(s) or nil
     end
 
-    if n == 2 then return "TANK" end
+    if not n then return nil end
+
+    local band = (_G.bit and _G.bit.band) or (_G.bit32 and _G.bit32.band)
+    if band then
+        if band(n, 4) ~= 0 then return "HEALER" end
+        if band(n, 1) ~= 0 then return "TANK" end
+        if band(n, 2) ~= 0 then return "DAMAGER" end
+    end
     if n == 4 then return "HEALER" end
-    if n == 8 then return "DAMAGER" end
+    if n == 1 then return "TANK" end
+    if n == 2 or n == 8 then return "DAMAGER" end
     return nil
 end
 
 local function ScoreboardRoleDebug(roleAssigned)
     if type(roleAssigned) == "nil" then return "nil" end
 
-    local ok2, is2 = pcall(function() return roleAssigned == 2 end)
-    local ok4, is4 = pcall(function() return roleAssigned == 4 end)
-    local ok8, is8 = pcall(function() return roleAssigned == 8 end)
+    local s = SafeToString(roleAssigned)
+    local n = s and tonumber(s) or nil
 
-    return "2=" .. (ok2 and Bool01(is2) or "err")
-        .. "/4=" .. (ok4 and Bool01(is4) or "err")
-        .. "/8=" .. (ok8 and Bool01(is8) or "err")
+    return "s=" .. DbgValue(s)
+        .. "/n=" .. DbgValue(n)
+        .. "/role=" .. DbgValue(ScoreboardRoleToRole(roleAssigned))
 end
 
 local SPEC_ROLE_BY_NAME = {
