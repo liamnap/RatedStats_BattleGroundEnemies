@@ -2551,16 +2551,19 @@ UpdateNameClipToHPFill = function(row)
 end
 
 local PREVIEW_ROSTER = {
-    { name = "Druid",        classFile = "DRUID",       role = "HEALER"  },
-    { name = "Shaman",       classFile = "SHAMAN",      role = "HEALER"  },
-    { name = "Priest",       classFile = "PRIEST",      role = "HEALER"  },
-    { name = "Demon Hunter", classFile = "DEMONHUNTER", role = "TANK"    },
-    { name = "Warrior",      classFile = "WARRIOR",     role = "DAMAGER" },
-    { name = "Paladin",      classFile = "PALADIN",     role = "DAMAGER" },
-    { name = "Rogue",        classFile = "ROGUE",       role = "DAMAGER" },
-    { name = "Druid",        classFile = "DRUID",       role = "DAMAGER" },
-    { name = "Mage",         classFile = "MAGE",        role = "DAMAGER" },
-    { name = "Warlock",      classFile = "WARLOCK",     role = "DAMAGER" },
+    -- Preview uses normal strings so the left-side rotated spec lane is visible
+    -- outside PvP. Live battleground specs may be secret display values; the
+    -- live path still only passes them directly to the FontString.
+    { name = "Druid",        classFile = "DRUID",       role = "HEALER",  specName = "Restoration" },
+    { name = "Shaman",       classFile = "SHAMAN",      role = "HEALER",  specName = "Restoration" },
+    { name = "Priest",       classFile = "PRIEST",      role = "HEALER",  specName = "Discipline"  },
+    { name = "Demon Hunter", classFile = "DEMONHUNTER", role = "TANK",    specName = "Vengeance"   },
+    { name = "Warrior",      classFile = "WARRIOR",     role = "DAMAGER", specName = "Arms"        },
+    { name = "Paladin",      classFile = "PALADIN",     role = "DAMAGER", specName = "Retribution" },
+    { name = "Rogue",        classFile = "ROGUE",       role = "DAMAGER", specName = "Subtlety"    },
+    { name = "Druid",        classFile = "DRUID",       role = "DAMAGER", specName = "Balance"     },
+    { name = "Mage",         classFile = "MAGE",        role = "DAMAGER", specName = "Frost"       },
+    { name = "Warlock",      classFile = "WARLOCK",     role = "DAMAGER", specName = "Affliction"  },
 }
 
 function BGE:ClearPreviewRows()
@@ -2603,14 +2606,14 @@ function BGE:EnsurePreviewRows()
             row.classFile = rec.classFile
             row.role = rec.role
             row.specID = nil
-            row.specName = nil
+            row.specName = rec.specName
             row.nameText:SetText(rec.name)
-            row.specText:SetText("")
+            UpdateSpecTextDisplay(row)
             row.hp:SetMinMaxValues(0, 100)
             row.hp:SetValue(82 - (i * 3 % 30))
             row.hpText:SetText(FormatHealthText(82 - (i * 3 % 30), 100, GetSetting("bgeHealthTextMode", 2)) or "")
             ApplyClassAlpha(row, CLASS_ALPHA_ACTIVE)
-            SetRoleTexture(row.roleIcon, row.role)
+            if row.roleIcon then row.roleIcon:Hide() end
             if GetSetting("bgeShowPower", true) then
                 row.power:SetMinMaxValues(0, 100)
                 row.power:SetValue(65 - (i * 4 % 40))
