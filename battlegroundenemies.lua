@@ -42,6 +42,12 @@ BGE._menuOpen = false
 
 local RS_TEXT_R, RS_TEXT_G, RS_TEXT_B = 182/255, 158/255, 134/255
 
+-- Scoreboard talentSpec can be a secret display value in 12.0.5+.
+-- We only pass that value directly to a FontString; do not compare it, key it,
+-- or try to convert it into a spec texture.
+local SPEC_TEXT_ROTATION_RADIANS = -math.pi / 2
+local SPEC_TEXT_SIDE_PADDING = 2
+
 local ROW_ALPHA_ACTIVE   = 1.0
 local ROW_ALPHA_OOR      = 0.55
 local ROW_ALPHA_DEAD     = 0.50
@@ -796,24 +802,31 @@ local function SetRoleTexture(tex, role)
     return false
 end
 
-local function UpdateRoleDisplay(row)
-    if not row then return end
+local function UpdateSpecTextDisplay(row)
+    if not row or not row.specText then return end
 
-    local role = NormalizeRole(row.role)
-    if role then
-        row.role = role
-        if SetRoleTexture(row.roleIcon, role) then
-            row.roleIcon:Show()
-        else
-            row.roleIcon:Hide()
-        end
-        row.specText:SetText("")
-        row.specText:Hide()
+    if type(row.specName) ~= "nil" then
+        -- Secret spec values are display-only. SetText can receive the value,
+        -- but this code must not inspect it or map it into an icon.
+        row.specText:SetText(row.specName)
+        row.specText:Show()
     else
-        row.roleIcon:Hide()
         row.specText:SetText("")
         row.specText:Hide()
     end
+end
+
+local function UpdateRoleDisplay(row)
+    if not row then return end
+
+    -- 12.0.5+ does not let us safely turn the scoreboard spec/role value
+    -- into a reliable role icon in battlegrounds. Keep the existing texture
+    -- object hidden so no empty icon lane is reserved in the row layout.
+    if row.roleIcon then
+        row.roleIcon:Hide()
+    end
+
+    UpdateSpecTextDisplay(row)
 end
 
 local function ScoreboardRoleForUnit(unit)
@@ -1266,9 +1279,11 @@ local function MakeRow(parent, index)
     row.hpText:SetTextColor(RS_TEXT_R, RS_TEXT_G, RS_TEXT_B)
 
     row.specText = row.hp:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-    row.specText:SetJustifyH("RIGHT")
+    row.specText:SetJustifyH("CENTER")
+    if row.specText.SetJustifyV then row.specText:SetJustifyV("MIDDLE") end
     row.specText:SetWordWrap(false)
     if row.specText.SetMaxLines then row.specText:SetMaxLines(1) end
+    if row.specText.SetRotation then row.specText:SetRotation(SPEC_TEXT_ROTATION_RADIANS) end
     row.specText:SetTextColor(RS_TEXT_R, RS_TEXT_G, RS_TEXT_B)
     row.specText:SetText("")
     row.specText:Hide()
@@ -1418,6 +1433,7 @@ function BGE:PrimeRosterSlots()
                     row.nameText:SetText("Enemy " .. tostring(i))
                     row.hpText:SetText("")
                     row.specText:SetText("")
+                    row.specText:Hide()
                     row.roleIcon:Hide()
                     row.icon:Hide()
                     row.iconHit:Hide()
@@ -1812,6 +1828,7 @@ function BGE:ReleaseRow(row, keepSeen)
     row.nameText:SetText("")
     row.hpText:SetText("")
     row.specText:SetText("")
+    row.specText:Hide()
     row.roleIcon:Hide()
     row.icon:Hide()
     row.iconHit:Hide()
@@ -2675,21 +2692,38 @@ function BGE:ApplyRowLayout(row)
     local leftInset  = 2
     local rightInset = 4
 
-    local roleSize = math.floor(math.max(10, math.min(h, 16)))
-    roleSize = math.max(10, math.min(roleSize, 96))
+    -- The spec label gets a fixed left lane. Its unrotated width becomes
+    -- the vertical clipping length after rotation, so long spec names cut
+    -- before they run past the bottom of the chosen row height.
+    local specLaneW = math.floor(math.max(12, math.min(34, h * 0.33)))
+    local specTextW = math.max(1, innerH - (SPEC_TEXT_SIDE_PADDING * 2))
+
+    row.specText:ClearAllPoints()
+    row.specText:SetWidth(specTextW)
+    if row.specText.SetHeight then row.specText:SetHeight(specLaneW) end
+    if row.specText.SetRotation then row.specText:SetRotation(SPEC_TEXT_ROTATION_RADIANS) end
+    row.specText:SetPoint(
+        "CENTER",
+        row,
+        "TOPLEFT",
+        border + leftInset + (specLaneW * 0.5),
+        -(border + SPEC_TEXT_SIDE_PADDING + (specTextW * 0.5))
+    )
+    row.specText:SetJustifyH("CENTER")
+    if row.specText.SetJustifyV then row.specText:SetJustifyV("MIDDLE") end
+    if row.specText.SetDrawLayer then row.specText:SetDrawLayer("OVERLAY", 7) end
     row.roleIcon:ClearAllPoints()
-    row.roleIcon:SetSize(roleSize, roleSize)
-    row.roleIcon:SetPoint("TOPLEFT", row.hp, "TOPLEFT", leftInset, 0)
-    if row.roleIcon.SetDrawLayer then row.roleIcon:SetDrawLayer("OVERLAY", 7) end
+    row.roleIcon:Hide()
 
     local iconTex = row.achievIconTex
     local iconSize = 8
     local iconPad = 1
     local namePad = 2
     local iconOffset = iconTex and (iconSize + iconPad) or 0
+    local nameLeft = leftInset + specLaneW + namePad + iconOffset
 
     row.nameText:ClearAllPoints()
-    row.nameText:SetPoint("TOPLEFT", row.hp, "TOPLEFT", leftInset + roleSize + namePad + iconOffset, -1)
+    row.nameText:SetPoint("TOPLEFT", row.hp, "TOPLEFT", nameLeft, -1)
     row.nameText:SetJustifyH("LEFT")
     if row.nameText.SetDrawLayer then row.nameText:SetDrawLayer("OVERLAY", 7) end
 
@@ -2711,19 +2745,13 @@ function BGE:ApplyRowLayout(row)
 
     row.hpText:ClearAllPoints()
     row.hpText:SetPoint("CENTER", row, "CENTER", 0, -1)
-    row.hpText:SetWidth(math.max(0, w - (leftInset + rightInset + (border * 2))))
+    row.hpText:SetWidth(math.max(0, w - (leftInset + rightInset + specLaneW + (border * 2))))
     row.hpText:SetJustifyH("CENTER")
     if row.hpText.SetDrawLayer then row.hpText:SetDrawLayer("OVERLAY", 7) end
 
-    local roleTextW = 0
-    row.specText:ClearAllPoints()
-    row.specText:SetPoint("RIGHT", row.hp, "RIGHT", -rightInset, 0)
-    row.specText:SetWidth(roleTextW)
-    row.specText:SetJustifyH("RIGHT")
-    if row.specText.SetDrawLayer then row.specText:SetDrawLayer("OVERLAY", 7) end
     UpdateRoleDisplay(row)
 
-    local nameMax = w - (leftInset + rightInset + roleSize + namePad + iconOffset + roleTextW + (border * 2))
+    local nameMax = w - (nameLeft + rightInset + (border * 2))
     row.nameText:SetWidth(math.max(20, nameMax))
 
     if row.hpText.GetFont and row.hpText.SetFont then
