@@ -2156,6 +2156,42 @@ function BGE:GetRowForExternalUnit(unit)
     return nil
 end
 
+function BGE:WarmupTargetOneMissingHealthRow()
+    if not GetSetting("bgeEnabled", true) then return end
+    if not IsInPVPInstance() then return end
+    if self:IsMatchStarted() then return end
+    if not _G.TargetUnit then return end
+
+    local expected = tonumber(self:ResolveExpectedRows()) or 10
+
+    for i = 1, expected do
+        local row = self.rows and self.rows[i]
+        local targetName = SafeNonEmptyString(row and row.fullName)
+            or SafeNonEmptyString(row and row.displayName)
+            or SafeNonEmptyString(row and row.name)
+
+        if row and targetName and not row._hasLiveHP then
+            local ok, err = pcall(_G.TargetUnit, targetName, true)
+
+            DPrint(
+                "HP_TARGET_PROBE:" .. tostring(i),
+                "target probe row=" .. tostring(i)
+                .. " name=" .. DbgValue(targetName)
+                .. " ok=" .. Bool01(ok)
+                .. " err=" .. DbgValue(err)
+            )
+
+            if ok then
+                self:HandleExternalUnit("target")
+                self:ScanNameplates()
+                self:UpdateRowVisibilities()
+            end
+
+            return
+        end
+    end
+end
+
 function BGE:HandleExternalUnit(unit)
     if not GetSetting("bgeEnabled", true) then return end
     if not IsInPVPInstance() then return end
@@ -3049,6 +3085,7 @@ evt:SetScript("OnEvent", function(_, event, arg1)
 
                 bge:UpdateMatchState()
                 bge:SeedRosterFromScoreboard()
+                bge:WarmupTargetOneMissingHealthRow()
                 bge:ScanNameplates()
                 bge:UpdateRowVisibilities()
 
