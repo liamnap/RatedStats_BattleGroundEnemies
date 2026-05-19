@@ -2366,7 +2366,7 @@ end
 
 function BGE:StartNameplateScanner()
     if self._nameplateTicker then return end
-    self._nameplateTicker = C_Timer.NewTicker(0.50, function()
+    self._nameplateTicker = C_Timer.NewTicker(0.25, function()
         local bge = _G.RSTATS_BGE
         if not bge then return end
         if not GetSetting("bgeEnabled", true) or not IsInPVPInstance() then
@@ -3053,25 +3053,24 @@ evt:SetScript("OnEvent", function(_, event, arg1)
                 bge:UpdateRowVisibilities()
 
                 have = tonumber(bge._scoreboardEnemyCount) or 0
-                roles = tonumber(bge._scoreboardRoleCount) or 0
                 local specs = tonumber(bge._scoreboardSpecCount) or 0
-                roleNeed = math.min(have, expected)
+                specNeed = math.min(have, expected)
+                liveHP = 0
+
+                for i = 1, expected do
+                    local row = bge.rows and bge.rows[i]
+                    if row and row._hasLiveHP then
+                        liveHP = liveHP + 1
+                    end
+                end
 
                 if attempts == 1 or attempts == 10 or attempts == 20 or attempts == 30 or attempts == 40 or attempts == 50 or attempts == 60 then
                     DPrint(
-                        "STARTUP_SEED_RETRY:" .. tostring(attempts),
-                        "startup seed attempt="
-                        .. tostring(attempts)
-                        .. " have="
-                        .. tostring(have)
-                        .. "/"
-                        .. tostring(expected)
-                        .. " roles="
-                        .. tostring(roles)
-                        .. "/"
-                        .. tostring(roleNeed)
-                        .. " specs="
-                        .. tostring(specs)
+                        "HP_STARTUP_RETRY:" .. tostring(attempts),
+                        "hp startup attempt=" .. tostring(attempts)
+                        .. " rows=" .. tostring(have) .. "/" .. tostring(expected)
+                        .. " specs=" .. tostring(specs) .. "/" .. tostring(specNeed)
+                        .. " liveHP=" .. tostring(liveHP) .. "/" .. tostring(expected)
                     )
                 end
 
