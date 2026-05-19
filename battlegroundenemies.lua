@@ -3065,7 +3065,7 @@ evt:SetScript("OnEvent", function(_, event, arg1)
                     )
                 end
 
-                if (have < expected or roles < roleNeed) and attempts < 60 then
+                if (have < expected or specs < specNeed or liveHP < expected) and attempts < 60 then
                     bge:RequestScoreboardData()
                     C_Timer.After(0.5, TryStartupScoreboard)
                 end
