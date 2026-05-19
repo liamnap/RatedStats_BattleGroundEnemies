@@ -3066,6 +3066,7 @@ evt:SetScript("OnEvent", function(_, event, arg1)
             BGE._scoreboardRoleCount = nil
             BGE._scoreboardSpecCount = nil
             BGE:RequestScoreboardData()
+            BGE:StartNameplateScanner()
 
             local function TryStartupScoreboard()
                 local bge = _G.RSTATS_BGE
@@ -3080,9 +3081,18 @@ evt:SetScript("OnEvent", function(_, event, arg1)
 
                 local expected = tonumber(bge:ResolveExpectedRows()) or 10
                 local have = tonumber(bge._scoreboardEnemyCount) or 0
-                local roles = tonumber(bge._scoreboardRoleCount) or 0
-                local roleNeed = math.min(have, expected)
-                if have >= expected and roles >= roleNeed then return end
+                local specs = tonumber(bge._scoreboardSpecCount) or 0
+                local specNeed = math.min(have, expected)
+                local liveHP = 0
+
+                for i = 1, expected do
+                    local row = bge.rows and bge.rows[i]
+                    if row and row._hasLiveHP then
+                        liveHP = liveHP + 1
+                    end
+                end
+
+                if have >= expected and specs >= specNeed and liveHP >= expected then return end
 
                 attempts = attempts + 1
 
