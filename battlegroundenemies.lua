@@ -149,7 +149,6 @@ end
 
 local function DbgValue(v)
     if type(v) == "nil" then return "nil" end
-    if IsSecretValue(v) then return "<secret>" end
     local ok, s = pcall(function() return tostring(v) end)
     if not ok or type(s) ~= "string" then return "<" .. type(v) .. ">" end
     if #s > 80 then return s:sub(1, 80) .. "..." end
