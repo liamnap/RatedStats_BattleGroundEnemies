@@ -1405,6 +1405,7 @@ function BGE:PrimeRosterSlots()
                     row._outOfRange = false
                     row._preview = false
                     row._hasLiveHP = false
+                    row._lastHPText = nil
                     row.nameText:SetText("Enemy " .. tostring(i))
                     row.hpText:SetText("")
                     row.specText:SetText("")
@@ -1792,6 +1793,7 @@ function BGE:ReleaseRow(row, keepSeen)
     row._hpSB = nil
     row._pwrSB = nil
     row._barsUnit = nil
+    row._lastHPText = nil
 
     row.nameText:SetText("")
     row.hpText:SetText("")
@@ -1998,7 +2000,15 @@ function BGE:UpdateHealth(row, unit)
         if pct then txt = tostring(pct) .. "%" end
     end
 
-    row.hpText:SetText(txt or "")
+    if txt then
+        row.hpText:SetText(txt)
+        row._hasLiveHP = true
+        row._lastHPText = txt
+    elseif row._lastHPText then
+        row.hpText:SetText(row._lastHPText)
+    else
+        row.hpText:SetText("")
+    end
 
     local dbgPlate, dbgUF = SafePlateFrame(unit)
     local dbgHBC = SafeFrameField(dbgUF, "HealthBarsContainer")
