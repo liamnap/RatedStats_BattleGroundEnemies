@@ -2263,14 +2263,42 @@ function BGE:HandlePlateAdded(unit)
     if not IsNameplateUnit(unit) then return end
     if not GetSetting("bgeEnabled", true) then return end
     if not IsInPVPInstance() then return end
-    if not SafeUnitExists(unit) or not SafeUnitIsEnemyPlayer(unit) then return end
+    if not SafeUnitExists(unit) then return end
 
     self:EnsureSecureRows()
 
     local idx = NameplateIndex(unit)
     if not idx or idx > self.maxPlates then return end
 
-    local row = self:GetRowForPlateUnit(unit)
+    local enemyUnit = SafeUnitIsEnemyPlayer(unit)
+    local matchedBy = enemyUnit and "enemyUnit" or nil
+    local row = nil
+
+    if enemyUnit then
+        row = self:GetRowForPlateUnit(unit)
+    else
+        local displayText, keyFull, keyBase = GetNameplateDisplayNames(unit)
+
+        if keyFull and self.rowByDisplayName and self.rowByDisplayName[keyFull] then
+            row = self.rowByDisplayName[keyFull]
+            matchedBy = "scoreboardFull"
+        elseif keyBase and self.rowByBaseName and self.rowByBaseName[keyBase] then
+            row = self.rowByBaseName[keyBase]
+            matchedBy = "scoreboardBase"
+        end
+
+        DPrint(
+            "HP_NP_GATE:" .. tostring(unit),
+            "np gate unit=" .. DbgValue(unit)
+            .. " enemyUnit=" .. Bool01(enemyUnit)
+            .. " display=" .. DbgValue(displayText)
+            .. " full=" .. DbgValue(keyFull)
+            .. " base=" .. DbgValue(keyBase)
+            .. " matchedBy=" .. DbgValue(matchedBy)
+            .. " row=" .. DbgValue(row and row.index)
+        )
+    end
+
     if not row then
         local displayText, keyFull, keyBase = GetNameplateDisplayNames(unit)
         local _, classFile = SafeUnitClass(unit)
@@ -2314,6 +2342,8 @@ function BGE:HandlePlateAdded(unit)
         "HP_MAP_OK:" .. tostring(row.index or "?"),
         "hp map ok row=" .. DbgValue(row.index)
         .. " unit=" .. DbgValue(unit)
+        .. " matchedBy=" .. DbgValue(matchedBy)
+        .. " enemyUnit=" .. Bool01(enemyUnit)
         .. " name=" .. DbgValue(row.displayName or row.name)
         .. " class=" .. DbgValue(row.classFile)
         .. " liveHP=" .. Bool01(row._hasLiveHP)
@@ -2444,11 +2474,9 @@ function BGE:ScanNameplates()
     for i = 1, self.maxPlates do
         local unit = NameplateUnitFromIndex(i)
         if SafeUnitExists(unit) then
-            if SafeUnitIsEnemyPlayer(unit) then
-                self:HandlePlateAdded(unit)
-            else
-                self:HandlePlateRemoved(unit)
-            end
+            self:HandlePlateAdded(unit)
+        else
+            self:HandlePlateRemoved(unit)
         end
     end
 end
