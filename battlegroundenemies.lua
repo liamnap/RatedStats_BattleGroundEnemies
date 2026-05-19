@@ -836,37 +836,12 @@ local function ScoreboardRoleForUnit(unit)
     if not guid then return nil, nil end
 
     local okInfo, info = pcall(_G.C_PvP.GetScoreInfoByPlayerGuid, guid)
-    if not okInfo or type(info) ~= "table" then
-        DPrint(
-            "ROLE_GUID:" .. tostring(guid),
-            "role guid unit=" .. DbgValue(unit)
-            .. " guid=" .. DbgValue(guid)
-            .. " okInfo=" .. Bool01(okInfo)
-            .. " infoType=" .. DbgValue(type(info))
-        )
-        return nil, nil
-    end
 
     local classToken = SafeNonEmptyString(info.classToken)
     local specName = SafeNonEmptyString(info.talentSpec)
     local assignedRole = ScoreboardRoleToRole(info.roleAssigned)
     local specRole = RoleFromSpecName(specName, classToken)
     local role = assignedRole or specRole
-
-    DPrint(
-        "ROLE_GUID:" .. tostring(guid),
-        "role guid unit=" .. DbgValue(unit)
-        .. " guid=" .. DbgValue(guid)
-        .. " class=" .. DbgValue(classToken)
-        .. " spec=" .. DbgValue(specName)
-        .. " rawSpec=" .. DbgValue(info.talentSpec)
-        .. " assigned=" .. DbgValue(info.roleAssigned)
-        .. " cmp=" .. ScoreboardRoleDebug(info.roleAssigned)
-        .. " assignedRole=" .. DbgValue(assignedRole)
-        .. " assignedRole=" .. DbgValue(assignedRole)
-        .. " specRole=" .. DbgValue(specRole)
-        .. " finalRole=" .. DbgValue(role)
-    )
 
     return role, specName
 end
@@ -1589,31 +1564,16 @@ function BGE:ApplyScoreboardRosterRow(row, info, rowIndex, scoreIndex)
     end
 
     if GetSetting("bgeDebug", false) then
-        self._debugPrintedSpecs = self._debugPrintedSpecs or {}
-
-        local dbgKey = tostring(rowIndex or row.index or "?")
-        if not self._debugPrintedSpecs[dbgKey] then
-            self._debugPrintedSpecs[dbgKey] = true
-
-            print(
-                "|cffb69e86[RSTATS-BGE]|r "
-                .. "role seed row=" .. DbgValue(rowIndex or row.index)
-                .. " name=" .. DbgValue(keyFull or keyBase or rawName)
-                .. " guid=" .. DbgValue(guid)
-                .. " class=" .. DbgValue(classToken)
-                .. " spec=" .. DbgValue(specDisplay)
-                .. " specPlain=" .. DbgValue(specName)
-                .. " rawSpec=" .. DbgValue(info.talentSpec)
-                .. " assigned=" .. DbgValue(info.roleAssigned)
-                .. " cmp=" .. ScoreboardRoleDebug(info.roleAssigned)
-                .. " specRole=" .. DbgValue(specRole)
-                .. " finalRole=" .. DbgValue(row.role)
-            )
-
-            if type(specDisplay) ~= "nil" then
-                pcall(print, "|cffb69e86[RSTATS-BGE]|r role seed raw spec row=" .. DbgValue(rowIndex or row.index) .. " spec=", specDisplay)
-            end
-        end
+        DPrint(
+            "HP_SCOREBOARD_ROW:" .. tostring(rowIndex or row.index or "?"),
+            "hp scoreboard row="
+            .. DbgValue(rowIndex or row.index)
+            .. " name=" .. DbgValue(keyFull or keyBase or rawName)
+            .. " spec=" .. DbgValue(specDisplay)
+            .. " class=" .. DbgValue(classToken)
+            .. " liveHP=" .. Bool01(row._hasLiveHP)
+            .. " unit=" .. DbgValue(row.unit)
+        )
     end
 
     row._scoreboardSeen = true
@@ -1727,13 +1687,21 @@ function BGE:SeedRosterFromScoreboard()
     self._scoreboardSpecCount = specCount
 
     self._scoreboardSeeded = true
+    local liveHP = 0
+    for i = 1, enemyCount do
+        local row = self.rows and self.rows[i]
+        if row and row._hasLiveHP then
+            liveHP = liveHP + 1
+        end
+    end
+
     DPrint(
-        "SCOREBOARD_SEED",
-        "seeded " .. tostring(enemyCount)
-        .. " enemy rows from scoreboard roles="
-        .. tostring(roleCount)
-        .. " specs="
-        .. tostring(specCount)
+        "HP_SCOREBOARD_SEED",
+        "hp scoreboard seeded="
+        .. tostring(enemyCount)
+        .. " specs=" .. tostring(specCount)
+        .. " liveHP=" .. tostring(liveHP)
+        .. "/" .. tostring(enemyCount)
     )
     self:UpdateRowVisibilities()
 end
@@ -2037,16 +2005,16 @@ function BGE:UpdateHealth(row, unit)
     local dbgHB = SafeFrameField(dbgHBC, "healthBar")
 
     DPrint(
-        "HP:" .. tostring(unit),
-        "hp unit=" .. DbgValue(unit)
-        .. " row=" .. DbgValue(row.index)
-        .. " sb=" .. DbgFrameName(sb)
+        "HP_UPDATE:" .. tostring(row.index or "?"),
+        "hp update row=" .. DbgValue(row.index)
+        .. " unit=" .. DbgValue(unit)
+        .. " name=" .. DbgValue(row.displayName or row.name)
+        .. " liveHP=" .. Bool01(row._hasLiveHP)
+        .. " txt=" .. DbgValue(txt)
         .. " cur=" .. DbgValue(cur)
         .. " max=" .. DbgValue(maxv)
         .. " pct=" .. DbgValue(pct)
-        .. " txt=" .. DbgValue(txt)
-        .. " mode=" .. DbgValue(mode)
-        .. " hasLiveHP=" .. Bool01(row._hasLiveHP)
+        .. " sb=" .. DbgFrameName(sb)
         .. " plate=" .. DbgFrameName(dbgPlate)
         .. " uf=" .. DbgFrameName(dbgUF)
         .. " hbc=" .. DbgFrameName(dbgHBC)
@@ -2135,14 +2103,6 @@ function BGE:UpdatePower(row, unit)
             cur = pctFromAPI
             maxv = 100
         end
-
-        DPrint(
-            "PWR_API:" .. tostring(unit),
-            "power percent api unit=" .. DbgValue(unit)
-            .. " type=" .. DbgValue(powerType)
-            .. " token=" .. DbgValue(powerToken)
-            .. " pct=" .. DbgValue(pctFromAPI)
-        )
     end
 
     if not cur or not maxv or maxv <= 0 then
@@ -2157,22 +2117,6 @@ function BGE:UpdatePower(row, unit)
 
         row.power:Hide()
 
-        local dbgPlate, dbgUF = SafePlateFrame(unit)
-        local dbgPBC = SafeFrameField(dbgUF, "PowerBarsContainer")
-
-        DPrint(
-            "PWR:" .. tostring(unit),
-            "power unit=" .. DbgValue(unit)
-            .. " row=" .. DbgValue(row.index)
-            .. " sb=" .. DbgFrameName(sb)
-            .. " cur=" .. DbgValue(cur)
-            .. " max=" .. DbgValue(maxv)
-            .. " pctAPI=" .. DbgValue(pctFromAPI)
-            .. " shown=0"
-            .. " plate=" .. DbgFrameName(dbgPlate)
-            .. " uf=" .. DbgFrameName(dbgUF)
-            .. " pbc=" .. DbgFrameName(dbgPBC)
-        )
         return
     end
 
@@ -2180,17 +2124,6 @@ function BGE:UpdatePower(row, unit)
     row.power:SetValue(cur)
     row.power:SetStatusBarColor(r, g, b, 0.9)
     row.power:Show()
-
-    DPrint(
-        "PWR:" .. tostring(unit),
-        "power unit=" .. DbgValue(unit)
-        .. " row=" .. DbgValue(row.index)
-        .. " sb=" .. DbgFrameName(sb)
-        .. " cur=" .. DbgValue(cur)
-        .. " max=" .. DbgValue(maxv)
-        .. " pctAPI=" .. DbgValue(pctFromAPI)
-        .. " shown=1"
-    )
 end
 
 function BGE:GetRowForExternalUnit(unit)
@@ -2240,7 +2173,16 @@ function BGE:HandlePlateAdded(unit)
 
     local row = self:GetRowForPlateUnit(unit)
     if not row then
-        DPrint("PLATE_NO_SLOT", "no roster slot available for " .. unit)
+        local displayText, keyFull, keyBase = GetNameplateDisplayNames(unit)
+        local _, classFile = SafeUnitClass(unit)
+        DPrint(
+            "HP_MAP_FAIL:" .. tostring(unit),
+            "hp map failed unit=" .. DbgValue(unit)
+            .. " display=" .. DbgValue(displayText)
+            .. " full=" .. DbgValue(keyFull)
+            .. " base=" .. DbgValue(keyBase)
+            .. " class=" .. DbgValue(classFile)
+        )
         return
     end
 
@@ -2270,15 +2212,14 @@ function BGE:HandlePlateAdded(unit)
     ApplyClassAlpha(row, CLASS_ALPHA_ACTIVE)
 
     DPrint(
-        "PLATE_ADD:" .. tostring(unit),
-        "plate unit=" .. DbgValue(unit)
-        .. " row=" .. DbgValue(row.index)
-        .. " guid=" .. DbgValue(row.guid)
+        "HP_MAP_OK:" .. tostring(row.index or "?"),
+        "hp map ok row=" .. DbgValue(row.index)
+        .. " unit=" .. DbgValue(unit)
         .. " name=" .. DbgValue(row.displayName or row.name)
         .. " class=" .. DbgValue(row.classFile)
-        .. " role=" .. DbgValue(row.role)
+        .. " liveHP=" .. Bool01(row._hasLiveHP)
+        .. " hpText=" .. DbgValue(row.hpText and row.hpText:GetText())
         .. " hpSB=" .. DbgFrameName(row._hpSB)
-        .. " pwrSB=" .. DbgFrameName(row._pwrSB)
     )
     
     self:UpdateRowVisibilities()
