@@ -149,6 +149,7 @@ end
 
 local function DbgValue(v)
     if type(v) == "nil" then return "nil" end
+    if IsSecretValue(v) then return "<secret>" end
     local ok, s = pcall(function() return tostring(v) end)
     if not ok or type(s) ~= "string" then return "<" .. type(v) .. ">" end
     if #s > 80 then return s:sub(1, 80) .. "..." end
@@ -2029,6 +2030,16 @@ function BGE:UpdateHealth(row, unit)
         .. " hbc=" .. DbgFrameName(dbgHBC)
         .. " hb=" .. DbgFrameName(dbgHB)
     )
+
+    if GetSetting("bgeDebug", false) and type(txt) ~= "nil" then
+        local key = "HP_RAW_TEXT:" .. tostring(row.index or "?")
+        local now = GetTime()
+        local last = BGE._dbgLast[key] or 0
+        if (now - last) >= 1.0 then
+            BGE._dbgLast[key] = now
+            pcall(print, "|cffb69e86[RSTATS-BGE]|r hp raw text row=", row.index, "unit=", unit, "name=", row.displayName or row.name, "txt=", txt)
+        end
+    end
 
     UpdateNameClipToHPFill(row)
 end
