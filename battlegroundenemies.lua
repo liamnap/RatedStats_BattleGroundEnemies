@@ -2166,25 +2166,47 @@ function BGE:WarmupTargetOneMissingHealthRow()
 
     for i = 1, expected do
         local row = self.rows and self.rows[i]
-        local targetName = SafeNonEmptyString(row and row.fullName)
-            or SafeNonEmptyString(row and row.displayName)
-            or SafeNonEmptyString(row and row.name)
+        if row and row._seenIdentity and not row._hasLiveHP then
+            local names = {
+                SafeNonEmptyString(row.name),
+                SafeNonEmptyString(row.displayName),
+                SafeNonEmptyString(row.fullName),
+            }
 
-        if row and targetName and not row._hasLiveHP then
-            local ok, err = pcall(_G.TargetUnit, targetName, true)
+            for n = 1, #names do
+                local targetName = names[n]
+                if targetName then
+                    local beforeFull, beforeBase = SafeUnitFullName("target")
+                    local ok, err = pcall(_G.TargetUnit, targetName, true)
 
-            DPrint(
-                "HP_TARGET_PROBE:" .. tostring(i),
-                "target probe row=" .. tostring(i)
-                .. " name=" .. DbgValue(targetName)
-                .. " ok=" .. Bool01(ok)
-                .. " err=" .. DbgValue(err)
-            )
+                    self:HandleExternalUnit("target")
+                    self:ScanNameplates()
+                    self:UpdateRowVisibilities()
 
-            if ok then
-                self:HandleExternalUnit("target")
-                self:ScanNameplates()
-                self:UpdateRowVisibilities()
+                    local afterFull, afterBase = SafeUnitFullName("target")
+                    local matched = false
+
+                    local targetRow = self:GetRowForExternalUnit("target")
+                    if targetRow and targetRow == row then
+                        matched = true
+                    end
+
+                    DPrint(
+                        "HP_TARGET_PROBE:" .. tostring(i) .. ":" .. tostring(n),
+                        "target probe row=" .. tostring(i)
+                        .. " try=" .. DbgValue(targetName)
+                        .. " ok=" .. Bool01(ok)
+                        .. " err=" .. DbgValue(err)
+                        .. " before=" .. DbgValue(beforeFull or beforeBase)
+                        .. " after=" .. DbgValue(afterFull or afterBase)
+                        .. " matched=" .. Bool01(matched)
+                        .. " liveHP=" .. Bool01(row._hasLiveHP)
+                    )
+
+                    if matched or row._hasLiveHP then
+                        return
+                    end
+                end
             end
 
             return
