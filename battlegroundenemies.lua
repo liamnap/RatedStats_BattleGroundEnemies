@@ -2170,28 +2170,42 @@ function BGE:WarmupTargetOneMissingHealthRow()
     if not GetSetting("bgeEnabled", true) then return end
     if not IsInPVPInstance() then return end
     if self:IsMatchStarted() then return end
-    if not _G.TargetUnit then return end
+    local runMacroText = (_G.C_Macro and _G.C_Macro.RunMacroText) or _G.RunMacroText
+    if not runMacroText and not _G.TargetUnit then return end
 
     local expected = tonumber(self:ResolveExpectedRows()) or 10
 
     for i = 1, expected do
         local row = self.rows and self.rows[i]
         if row and row._seenIdentity and not row._hasLiveHP then
-            local targetAttempts = {
-                { label = "base", name = SafeNonEmptyString(row.name), exact = false },
-                { label = "baseExact", name = SafeNonEmptyString(row.name), exact = true },
-                { label = "display", name = SafeNonEmptyString(row.displayName), exact = false },
-                { label = "displayExact", name = SafeNonEmptyString(row.displayName), exact = true },
-                { label = "full", name = SafeNonEmptyString(row.fullName), exact = false },
-                { label = "fullExact", name = SafeNonEmptyString(row.fullName), exact = true },
-            }
+			local targetAttempts = {
+				{ label = "tarBase", name = SafeNonEmptyString(row.name), macro = "/target " },
+				{ label = "tarDisplay", name = SafeNonEmptyString(row.displayName), macro = "/target " },
+				{ label = "tarFull", name = SafeNonEmptyString(row.fullName), macro = "/target " },
+			
+				{ label = "targetBase", name = SafeNonEmptyString(row.name), exact = false },
+				{ label = "targetDisplay", name = SafeNonEmptyString(row.displayName), exact = false },
+				{ label = "targetFull", name = SafeNonEmptyString(row.fullName), exact = false },
+			
+				{ label = "exactBase", name = SafeNonEmptyString(row.name), exact = true },
+				{ label = "exactDisplay", name = SafeNonEmptyString(row.displayName), exact = true },
+				{ label = "exactFull", name = SafeNonEmptyString(row.fullName), exact = true },
+			}
 
             for n = 1, #targetAttempts do
                 local attempt = targetAttempts[n]
                 local targetName = attempt and attempt.name
                 if targetName then
-                    local beforeFull, beforeBase = SafeUnitFullName("target")
-                    local ok, err = pcall(_G.TargetUnit, targetName, attempt.exact)
+					local beforeFull, beforeBase = SafeUnitFullName("target")
+					local ok, err = false, nil
+					
+					if attempt.macro and runMacroText then
+						ok, err = pcall(runMacroText, attempt.macro .. targetName)
+					elseif _G.TargetUnit then
+						ok, err = pcall(_G.TargetUnit, targetName, attempt.exact)
+					else
+						err = "no target method"
+					end
 
                     self:HandleExternalUnit("target")
                     self:ScanNameplates()
@@ -2210,7 +2224,8 @@ function BGE:WarmupTargetOneMissingHealthRow()
                         "target probe row=" .. tostring(i)
                         .. " mode=" .. DbgValue(attempt.label)
                         .. " try=" .. DbgValue(targetName)
-                        .. " exact=" .. Bool01(attempt.exact)
+						.. " macro=" .. DbgValue(attempt.macro)
+						.. " exact=" .. Bool01(attempt.exact)
                         .. " ok=" .. Bool01(ok)
                         .. " err=" .. DbgValue(err)
                         .. " before=" .. DbgValue(beforeFull or beforeBase)
