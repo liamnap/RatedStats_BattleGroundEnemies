@@ -33,6 +33,7 @@ BGE._matchStarted = false
 BGE._anchorsDirty = false
 BGE._rowsDirty = false
 BGE._showDirty = false
+BGE._settingsDirty = false
 BGE._profilePrefix = nil
 BGE._selectedRow = nil
 BGE._anchorHover = 0
@@ -3268,38 +3269,44 @@ function BGE:ApplySettings()
     end
 
     local locked = GetSetting("bgeLocked", true)
-    self.frame:SetMovable(not locked)
-    self.frame:EnableMouse(not locked)
-    self.frame:SetClampedToScreen(true)
+    if InLockdown() then
+        self._settingsDirty = true
+    else
+        self._settingsDirty = false
 
-    self.frame:RegisterForDrag("LeftButton")
-    self.frame:SetScript("OnDragStart", function(f)
-        if GetSetting("bgeLocked", true) then return end
-        f:StartMoving()
-    end)
-    self.frame:SetScript("OnDragStop", function(f)
-        f:StopMovingOrSizing()
-        local p, _, rp, x, y = f:GetPoint(1)
-        SetSetting("bgePoint", p)
-        SetSetting("bgeRelPoint", rp)
-        SetSetting("bgeX", x)
-        SetSetting("bgeY", y)
-    end)
+        self.frame:SetMovable(not locked)
+        self.frame:EnableMouse(not locked)
+        self.frame:SetClampedToScreen(true)
 
-    if self.frame.anchorTab then
-        self.frame.anchorTab:RegisterForDrag("LeftButton")
-        self.frame.anchorTab:SetScript("OnDragStart", function()
+        self.frame:RegisterForDrag("LeftButton")
+        self.frame:SetScript("OnDragStart", function(f)
             if GetSetting("bgeLocked", true) then return end
-            self.frame:StartMoving()
+            f:StartMoving()
         end)
-        self.frame.anchorTab:SetScript("OnDragStop", function()
-            self.frame:StopMovingOrSizing()
-            local p, _, rp, x, y = self.frame:GetPoint(1)
+        self.frame:SetScript("OnDragStop", function(f)
+            f:StopMovingOrSizing()
+            local p, _, rp, x, y = f:GetPoint(1)
             SetSetting("bgePoint", p)
             SetSetting("bgeRelPoint", rp)
             SetSetting("bgeX", x)
             SetSetting("bgeY", y)
         end)
+
+        if self.frame.anchorTab then
+            self.frame.anchorTab:RegisterForDrag("LeftButton")
+            self.frame.anchorTab:SetScript("OnDragStart", function()
+                if GetSetting("bgeLocked", true) then return end
+                self.frame:StartMoving()
+            end)
+            self.frame.anchorTab:SetScript("OnDragStop", function()
+                self.frame:StopMovingOrSizing()
+                local p, _, rp, x, y = self.frame:GetPoint(1)
+                SetSetting("bgePoint", p)
+                SetSetting("bgeRelPoint", rp)
+                SetSetting("bgeX", x)
+                SetSetting("bgeY", y)
+            end)
+        end
     end
 
     self:RefreshVisibility()
@@ -3501,6 +3508,9 @@ evt:SetScript("OnEvent", function(_, event, arg1)
     end
 
     if event == "PLAYER_REGEN_ENABLED" then
+        if BGE._settingsDirty then
+            BGE:ApplySettings()
+        end
         if BGE._showDirty and BGE.frame then
             BGE._showDirty = false
             BGE.frame:Show()
