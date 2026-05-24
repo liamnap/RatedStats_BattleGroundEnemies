@@ -56,7 +56,7 @@ local CLASS_ALPHA_ACTIVE = 0.85
 local CLASS_ALPHA_OOR    = 0.55
 local CLASS_ALPHA_DEAD   = 0.50
 local CLICK_FOR_HP_TEXT  = "Click for HP"
-local CLICK_FOR_HP_SCALE = 0.50
+local CLICK_FOR_HP_FONT_SCALE = 0.50
 
 local GetSetting
 local SetSetting
@@ -1279,6 +1279,12 @@ local function MakeRow(parent, index)
     row.hpText:SetWordWrap(false)
     if row.hpText.SetMaxLines then row.hpText:SetMaxLines(1) end
     row.hpText:SetTextColor(RS_TEXT_R, RS_TEXT_G, RS_TEXT_B)
+    do
+        local font, size, flags = row.hpText:GetFont()
+        row._hpTextFont = font
+        row._hpTextFontSize = size
+        row._hpTextFontFlags = flags
+    end
 
     row.specText = row.hp:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
     row.specText:SetJustifyH("CENTER")
@@ -1679,8 +1685,11 @@ function BGE:ApplyScoreboardRosterRow(row, info, rowIndex, scoreIndex)
 		ApplyClassAlpha(row, CLASS_ALPHA_ACTIVE)
 	end
     if not row._hasLiveHP and not row._dead then
-        row.hpText:SetText(CLICK_FOR_HP_TEXT)
-        row.hpText:SetScale(CLICK_FOR_HP_SCALE)
+		row._isClickForHP = true
+		if row._hpTextFont and row._hpTextFontSize then
+			row.hpText:SetFont(row._hpTextFont, math.max(7, math.floor(row._hpTextFontSize * CLICK_FOR_HP_FONT_SCALE)), row._hpTextFontFlags)
+		end
+		row.hpText:SetText(CLICK_FOR_HP_TEXT)
     end
 
     local hadIcon = row.achievIconTex
@@ -2006,8 +2015,11 @@ function BGE:UpdateIdentity(row, unit)
     ApplyClassAlpha(row, row._outOfRange and CLASS_ALPHA_OOR or CLASS_ALPHA_ACTIVE)
 
     if not row._hasLiveHP and not row._dead and not row._preview then
-        row.hpText:SetText(CLICK_FOR_HP_TEXT)
-        row.hpText:SetScale(CLICK_FOR_HP_SCALE)
+		row._isClickForHP = true
+		if row._hpTextFont and row._hpTextFontSize then
+			row.hpText:SetFont(row._hpTextFont, math.max(7, math.floor(row._hpTextFontSize * CLICK_FOR_HP_FONT_SCALE)), row._hpTextFontFlags)
+		end
+		row.hpText:SetText(CLICK_FOR_HP_TEXT)
     end
 
     local targetName =
@@ -2076,7 +2088,10 @@ function BGE:UpdateHealth(row, unit)
     if SafeUnitIsDead(unit) then
         row.hp:SetMinMaxValues(0, 1)
         row.hp:SetValue(0)
-        row.hpText:SetScale(1)
+		row._isClickForHP = false
+		if row._hpTextFont and row._hpTextFontSize then
+			row.hpText:SetFont(row._hpTextFont, row._hpTextFontSize, row._hpTextFontFlags)
+		end
         row.hpText:SetText("DEAD")
         row._dead = true
         row._hasLiveHP = true
@@ -2156,18 +2171,30 @@ function BGE:UpdateHealth(row, unit)
 
     if txt then
         row.hpText:SetText(txt)
-        row.hpText:SetScale(1)
+		row._isClickForHP = false
+		if row._hpTextFont and row._hpTextFontSize then
+			row.hpText:SetFont(row._hpTextFont, row._hpTextFontSize, row._hpTextFontFlags)
+		end
         row._hasLiveHP = true
         row._lastHPText = txt
     elseif row._lastHPText then
-        row.hpText:SetScale(1)
+		row._isClickForHP = false
+		if row._hpTextFont and row._hpTextFontSize then
+			row.hpText:SetFont(row._hpTextFont, row._hpTextFontSize, row._hpTextFontFlags)
+		end
         row.hpText:SetText(row._lastHPText)
     else
         if row._seenIdentity and not row._dead and not row._preview then
-            row.hpText:SetText(CLICK_FOR_HP_TEXT)
-            row.hpText:SetScale(CLICK_FOR_HP_SCALE)
+		row._isClickForHP = true
+		    if row._hpTextFont and row._hpTextFontSize then
+			    row.hpText:SetFont(row._hpTextFont, math.max(7, math.floor(row._hpTextFontSize * CLICK_FOR_HP_FONT_SCALE)), row._hpTextFontFlags)
+		    end
+		    row.hpText:SetText(CLICK_FOR_HP_TEXT)
         else
-            row.hpText:SetScale(1)
+		    row._isClickForHP = false
+		    if row._hpTextFont and row._hpTextFontSize then
+			    row.hpText:SetFont(row._hpTextFont, row._hpTextFontSize, row._hpTextFontFlags)
+		    end
             row.hpText:SetText("")
         end
     end
@@ -2559,8 +2586,11 @@ function BGE:HandlePlateRemoved(unit)
             row._seenIdentity = true
             row._placeholder = false
             if not row._hasLiveHP and not row._dead then
-                row.hpText:SetText(CLICK_FOR_HP_TEXT)
-                row.hpText:SetScale(CLICK_FOR_HP_SCALE)
+		        row._isClickForHP = true
+        		if row._hpTextFont and row._hpTextFontSize then
+	        		row.hpText:SetFont(row._hpTextFont, math.max(7, math.floor(row._hpTextFontSize * CLICK_FOR_HP_FONT_SCALE)), row._hpTextFontFlags)
+        		end
+        		row.hpText:SetText(CLICK_FOR_HP_TEXT)
             end
             row.hp:SetMinMaxValues(0, 1)
             row.hp:SetValue(1)
@@ -3011,7 +3041,15 @@ function BGE:ApplyRowLayout(row)
         local font, _, flags = row.hpText:GetFont()
         if font then
             local fs = math.floor(math.max(9, math.min(hpH * 0.35, 20)))
-            row.hpText:SetFont(font, fs, flags)
+            row._hpTextFont = font
+            row._hpTextFontSize = fs
+            row._hpTextFontFlags = flags
+
+            if row._isClickForHP then
+                row.hpText:SetFont(font, math.max(7, math.floor(fs * CLICK_FOR_HP_FONT_SCALE)), flags)
+            else
+                row.hpText:SetFont(font, fs, flags)
+            end
         end
     end
 end
