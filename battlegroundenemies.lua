@@ -556,11 +556,14 @@ local function FindPlatePowerStatusBar(unit)
     if unit == "target" then
         local targetContent = SafeFrameField(_G.TargetFrame, "TargetFrameContent")
         local targetMain = SafeFrameField(targetContent, "TargetFrameContentMain")
+        local targetHealthBarsContainer = SafeFrameField(targetMain, "HealthBarsContainer")
 
         local candidates = {
             SafeFrameField(targetMain, "ManaBar"),
             SafeFrameField(_G.TargetFrame, "ManaBar"),
             _G.TargetFrameManaBar,
+            FindStatusBar(targetMain, targetHealthBarsContainer),
+            FindStatusBar(targetContent, targetHealthBarsContainer),
         }
 
         for i = 1, #candidates do
@@ -570,11 +573,14 @@ local function FindPlatePowerStatusBar(unit)
     elseif unit == "focus" then
         local focusContent = SafeFrameField(_G.FocusFrame, "TargetFrameContent")
         local focusMain = SafeFrameField(focusContent, "TargetFrameContentMain")
+        local focusHealthBarsContainer = SafeFrameField(focusMain, "HealthBarsContainer")
 
         local candidates = {
             SafeFrameField(focusMain, "ManaBar"),
             SafeFrameField(_G.FocusFrame, "ManaBar"),
             _G.FocusFrameManaBar,
+            FindStatusBar(focusMain, focusHealthBarsContainer),
+            FindStatusBar(focusContent, focusHealthBarsContainer),
         }
 
         for i = 1, #candidates do
@@ -2410,7 +2416,7 @@ function BGE:UpdatePower(row, unit)
             return
         end
 
-        if row._hasLivePower and IsNameplateUnit(unit) then
+        if row._hasLivePower and (IsNameplateUnit(unit) or unit == "target" or unit == "focus") then
             DPrint(
                 "PWR_KEEP:" .. tostring(row.index or "?"),
                 "power keep row=" .. DbgValue(row.index)
