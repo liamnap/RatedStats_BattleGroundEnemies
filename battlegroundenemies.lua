@@ -56,6 +56,7 @@ local CLASS_ALPHA_ACTIVE = 0.85
 local CLASS_ALPHA_OOR    = 0.55
 local CLASS_ALPHA_DEAD   = 0.50
 local CLICK_FOR_HP_TEXT  = "Click for HP"
+local CLICK_FOR_HP_SCALE = 0.50
 
 local GetSetting
 local SetSetting
@@ -1679,6 +1680,7 @@ function BGE:ApplyScoreboardRosterRow(row, info, rowIndex, scoreIndex)
 	end
     if not row._hasLiveHP and not row._dead then
         row.hpText:SetText(CLICK_FOR_HP_TEXT)
+        row.hpText:SetScale(CLICK_FOR_HP_SCALE)
     end
 
     local hadIcon = row.achievIconTex
@@ -2005,6 +2007,7 @@ function BGE:UpdateIdentity(row, unit)
 
     if not row._hasLiveHP and not row._dead and not row._preview then
         row.hpText:SetText(CLICK_FOR_HP_TEXT)
+        row.hpText:SetScale(CLICK_FOR_HP_SCALE)
     end
 
     local targetName =
@@ -2073,6 +2076,7 @@ function BGE:UpdateHealth(row, unit)
     if SafeUnitIsDead(unit) then
         row.hp:SetMinMaxValues(0, 1)
         row.hp:SetValue(0)
+        row.hpText:SetScale(1)
         row.hpText:SetText("DEAD")
         row._dead = true
         row._hasLiveHP = true
@@ -2152,14 +2156,18 @@ function BGE:UpdateHealth(row, unit)
 
     if txt then
         row.hpText:SetText(txt)
+        row.hpText:SetScale(1)
         row._hasLiveHP = true
         row._lastHPText = txt
     elseif row._lastHPText then
+        row.hpText:SetScale(1)
         row.hpText:SetText(row._lastHPText)
     else
         if row._seenIdentity and not row._dead and not row._preview then
             row.hpText:SetText(CLICK_FOR_HP_TEXT)
+            row.hpText:SetScale(CLICK_FOR_HP_SCALE)
         else
+            row.hpText:SetScale(1)
             row.hpText:SetText("")
         end
     end
@@ -2552,6 +2560,7 @@ function BGE:HandlePlateRemoved(unit)
             row._placeholder = false
             if not row._hasLiveHP and not row._dead then
                 row.hpText:SetText(CLICK_FOR_HP_TEXT)
+                row.hpText:SetScale(CLICK_FOR_HP_SCALE)
             end
             row.hp:SetMinMaxValues(0, 1)
             row.hp:SetValue(1)
