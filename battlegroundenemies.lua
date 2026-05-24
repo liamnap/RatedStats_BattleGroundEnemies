@@ -1155,11 +1155,16 @@ local function MakeRow(parent, index)
     row:Show()
     row:EnableMouse(true)
     row:RegisterForClicks(GetCVarBool("ActionButtonUseKeyDown") and "AnyDown" or "AnyUp")
-    row:SetAttribute("type1", "target")
     row:SetAttribute("unit", nil)
+    row:SetAttribute("type1", nil)
+    row:SetAttribute("type2", nil)
+    row:SetAttribute("macrotext1", nil)
+    row:SetAttribute("macrotext2", nil)
     row.plateIndex = nil
     row.unit = nil
     row._secureUnit = nil
+    row._secureName = nil
+    row._targetBindingsDirty = false
 
     row:SetScript("PostClick", function(self)
         local bge = _G.RSTATS_BGE
@@ -1539,7 +1544,15 @@ function BGE:ApplyScoreboardRosterRow(row, info, rowIndex, scoreIndex)
             if self.rowByUnit[row.unit] == row then self.rowByUnit[row.unit] = nil end
             if not InLockdown() then
                 row:SetAttribute("unit", nil)
+                row:SetAttribute("type1", nil)
+                row:SetAttribute("type2", nil)
+                row:SetAttribute("macrotext1", nil)
+                row:SetAttribute("macrotext2", nil)
                 row._secureUnit = nil
+                row._secureName = nil
+                row._targetBindingsDirty = false
+            else
+                row._targetBindingsDirty = true
             end
             row.unit = nil
             row.plateIndex = nil
@@ -1591,6 +1604,40 @@ function BGE:ApplyScoreboardRosterRow(row, info, rowIndex, scoreIndex)
         row.nameText:SetText(row.displayName)
     else
         row.nameText:SetText("Enemy " .. tostring(rowIndex or row.index or ""))
+    end
+
+    local targetName =
+        SafeNonEmptyString(row.fullName)
+        or SafeNonEmptyString(row.displayName)
+        or SafeNonEmptyString(row.name)
+
+    if not InLockdown() then
+        row:RegisterForClicks(GetCVarBool("ActionButtonUseKeyDown") and "AnyDown" or "AnyUp")
+        row:SetAttribute("unit", nil)
+        row:SetAttribute("type1", nil)
+        row:SetAttribute("type2", nil)
+        row:SetAttribute("macrotext1", nil)
+        row:SetAttribute("macrotext2", nil)
+        row._secureUnit = nil
+        row._secureName = nil
+        row._targetBindingsDirty = false
+
+        if targetName then
+            row:SetAttribute("type1", "macro")
+            row:SetAttribute("macrotext1", "/cleartarget\n/targetexact " .. targetName)
+
+            row:SetAttribute("type2", "macro")
+            row:SetAttribute("macrotext2", "/targetexact " .. targetName .. "\n/focus\n/targetlasttarget")
+
+            row._secureName = targetName
+        elseif row.unit and SafeUnitExists(row.unit) then
+            row:SetAttribute("unit", row.unit)
+            row:SetAttribute("type1", "target")
+            row:SetAttribute("type2", "focus")
+            row._secureUnit = row.unit
+        end
+    else
+        row._targetBindingsDirty = true
     end
 
     UpdateRoleDisplay(row)
@@ -1788,7 +1835,15 @@ function BGE:ReleaseRow(row, keepSeen)
     row.plateIndex = nil
     if not InLockdown() then
         row:SetAttribute("unit", nil)
+        row:SetAttribute("type1", nil)
+        row:SetAttribute("type2", nil)
+        row:SetAttribute("macrotext1", nil)
+        row:SetAttribute("macrotext2", nil)
         row._secureUnit = nil
+        row._secureName = nil
+        row._targetBindingsDirty = false
+    else
+        row._targetBindingsDirty = true
     end
     row._hpSB = nil
     row._pwrSB = nil
@@ -1911,6 +1966,40 @@ function BGE:UpdateIdentity(row, unit)
     row._preview = false
     row.bg:SetColorTexture(0, 0, 0, 0.35)
     ApplyClassAlpha(row, row._outOfRange and CLASS_ALPHA_OOR or CLASS_ALPHA_ACTIVE)
+
+    local targetName =
+        SafeNonEmptyString(row.fullName)
+        or SafeNonEmptyString(row.displayName)
+        or SafeNonEmptyString(row.name)
+
+    if not InLockdown() then
+        row:RegisterForClicks(GetCVarBool("ActionButtonUseKeyDown") and "AnyDown" or "AnyUp")
+        row:SetAttribute("unit", nil)
+        row:SetAttribute("type1", nil)
+        row:SetAttribute("type2", nil)
+        row:SetAttribute("macrotext1", nil)
+        row:SetAttribute("macrotext2", nil)
+        row._secureUnit = nil
+        row._secureName = nil
+        row._targetBindingsDirty = false
+
+        if targetName then
+            row:SetAttribute("type1", "macro")
+            row:SetAttribute("macrotext1", "/cleartarget\n/targetexact " .. targetName)
+
+            row:SetAttribute("type2", "macro")
+            row:SetAttribute("macrotext2", "/targetexact " .. targetName .. "\n/focus\n/targetlasttarget")
+
+            row._secureName = targetName
+        elseif row.unit and SafeUnitExists(row.unit) then
+            row:SetAttribute("unit", row.unit)
+            row:SetAttribute("type1", "target")
+            row:SetAttribute("type2", "focus")
+            row._secureUnit = row.unit
+        end
+    else
+        row._targetBindingsDirty = true
+    end
 
     UpdateRoleDisplay(row)
 
@@ -2337,6 +2426,19 @@ function BGE:HandlePlateAdded(unit)
 
     local old = self.rowByUnit[unit]
     if old and old ~= row then
+        if old._secureUnit == unit and not old._secureName then
+            if not InLockdown() then
+                old:SetAttribute("unit", nil)
+                old:SetAttribute("type1", nil)
+                old:SetAttribute("type2", nil)
+                old:SetAttribute("macrotext1", nil)
+                old:SetAttribute("macrotext2", nil)
+                old._secureUnit = nil
+                old._targetBindingsDirty = false
+            else
+                old._targetBindingsDirty = true
+            end
+        end
         old.unit = nil
         old.plateIndex = nil
         old._outOfRange = old._seenIdentity and true or false
@@ -2348,6 +2450,18 @@ function BGE:HandlePlateAdded(unit)
     self.rowByUnit[unit] = row
     row.unit = unit
     row.plateIndex = idx
+    if not InLockdown() and not row._secureName then
+        row:RegisterForClicks(GetCVarBool("ActionButtonUseKeyDown") and "AnyDown" or "AnyUp")
+        row:SetAttribute("unit", unit)
+        row:SetAttribute("type1", "target")
+        row:SetAttribute("type2", "focus")
+        row:SetAttribute("macrotext1", nil)
+        row:SetAttribute("macrotext2", nil)
+        row._secureUnit = unit
+        row._targetBindingsDirty = false
+    elseif InLockdown() then
+        row._targetBindingsDirty = true
+    end
     row._placeholder = false
     row._outOfRange = false
     row._preview = false
@@ -2384,6 +2498,19 @@ function BGE:HandlePlateRemoved(unit)
 
     self.rowByUnit[unit] = nil
     if row.unit == unit then
+        if row._secureUnit == unit and not row._secureName then
+            if not InLockdown() then
+                row:SetAttribute("unit", nil)
+                row:SetAttribute("type1", nil)
+                row:SetAttribute("type2", nil)
+                row:SetAttribute("macrotext1", nil)
+                row:SetAttribute("macrotext2", nil)
+                row._secureUnit = nil
+                row._targetBindingsDirty = false
+            else
+                row._targetBindingsDirty = true
+            end
+        end
         row.unit = nil
         row.plateIndex = nil
     end
@@ -3246,6 +3373,39 @@ evt:SetScript("OnEvent", function(_, event, arg1)
         BGE:PrimeRosterSlots()
         BGE:SeedRosterFromScoreboard()
         BGE:ScanNameplates()
+        for _, row in ipairs(BGE.rows or {}) do
+            if row and row._targetBindingsDirty then
+                local targetName =
+                    SafeNonEmptyString(row.fullName)
+                    or SafeNonEmptyString(row.displayName)
+                    or SafeNonEmptyString(row.name)
+
+                row:RegisterForClicks(GetCVarBool("ActionButtonUseKeyDown") and "AnyDown" or "AnyUp")
+                row:SetAttribute("unit", nil)
+                row:SetAttribute("type1", nil)
+                row:SetAttribute("type2", nil)
+                row:SetAttribute("macrotext1", nil)
+                row:SetAttribute("macrotext2", nil)
+                row._secureUnit = nil
+                row._secureName = nil
+                row._targetBindingsDirty = false
+
+                if targetName then
+                    row:SetAttribute("type1", "macro")
+                    row:SetAttribute("macrotext1", "/cleartarget\n/targetexact " .. targetName)
+
+                    row:SetAttribute("type2", "macro")
+                    row:SetAttribute("macrotext2", "/targetexact " .. targetName .. "\n/focus\n/targetlasttarget")
+
+                    row._secureName = targetName
+                elseif row.unit and SafeUnitExists(row.unit) then
+                    row:SetAttribute("unit", row.unit)
+                    row:SetAttribute("type1", "target")
+                    row:SetAttribute("type2", "focus")
+                    row._secureUnit = row.unit
+                end
+            end
+        end
         return
     end
 
