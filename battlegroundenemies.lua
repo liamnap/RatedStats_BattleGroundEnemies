@@ -1964,13 +1964,34 @@ function BGE:UpdateHealth(row, unit)
         row._hpSB = sb
     end
 
+    local copiedBar = false
+    if sb and sb.GetValue and sb.GetMinMaxValues then
+        local okValue, rawValue = pcall(sb.GetValue, sb)
+        local okRange, rawMin, rawMax = pcall(sb.GetMinMaxValues, sb)
+
+        if okValue and okRange
+            and type(rawValue) == "number"
+            and type(rawMin) == "number"
+            and type(rawMax) == "number"
+        then
+            local okSetRange = pcall(row.hp.SetMinMaxValues, row.hp, rawMin, rawMax)
+            local okSetValue = pcall(row.hp.SetValue, row.hp, rawValue)
+            copiedBar = okSetRange and okSetValue
+            if copiedBar then
+                row._hasLiveHP = true
+            end
+        end
+    end
+
     local cur, maxv = SafeStatusBarValues(sb)
     local pct = nil
     if cur and maxv then
-        pcall(row.hp.SetMinMaxValues, row.hp, 0, maxv)
-        pcall(row.hp.SetValue, row.hp, cur)
+        if not copiedBar then
+            pcall(row.hp.SetMinMaxValues, row.hp, 0, maxv)
+            pcall(row.hp.SetValue, row.hp, cur)
+        end
         row._hasLiveHP = true
-    else
+    elseif not copiedBar then
         pct = SafePercentFromStatusBarFill(sb)
         if pct then
             row.hp:SetMinMaxValues(0, 100)
@@ -2024,6 +2045,7 @@ function BGE:UpdateHealth(row, unit)
         .. " cur=" .. DbgValue(cur)
         .. " max=" .. DbgValue(maxv)
         .. " pct=" .. DbgValue(pct)
+        .. " copiedBar=" .. Bool01(copiedBar)
         .. " sb=" .. DbgFrameName(sb)
         .. " plate=" .. DbgFrameName(dbgPlate)
         .. " uf=" .. DbgFrameName(dbgUF)
