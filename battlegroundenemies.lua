@@ -2403,6 +2403,24 @@ function BGE:UpdatePower(row, unit)
             row.power:SetMinMaxValues(0, 100)
             row.power:SetValue(pct)
             row.power:SetStatusBarColor(r, g, b, 0.9)
+            row._hasLivePower = true
+            row._lastPowerUnit = unit
+            row.power:Show()
+            return
+        end
+
+        if row._hasLivePower and IsNameplateUnit(unit) then
+            DPrint(
+                "PWR_KEEP:" .. tostring(row.index or "?"),
+                "power keep row=" .. DbgValue(row.index)
+                .. " unit=" .. DbgValue(unit)
+                .. " sb=" .. DbgFrameName(sb)
+                .. " apiCur=" .. DbgValue(apiCur)
+                .. " apiMax=" .. DbgValue(apiMax)
+                .. " type=" .. DbgValue(powerType)
+                .. " token=" .. DbgValue(powerToken)
+            )
+
             row.power:Show()
             return
         end
@@ -2418,6 +2436,8 @@ function BGE:UpdatePower(row, unit)
             .. " token=" .. DbgValue(powerToken)
         )
 
+        row._hasLivePower = false
+        row._lastPowerUnit = nil
         row.power:Hide()
 
         return
@@ -2426,6 +2446,8 @@ function BGE:UpdatePower(row, unit)
     row.power:SetMinMaxValues(0, maxv)
     row.power:SetValue(cur)
     row.power:SetStatusBarColor(r, g, b, 0.9)
+    row._hasLivePower = true
+    row._lastPowerUnit = unit
     row.power:Show()
 end
 
