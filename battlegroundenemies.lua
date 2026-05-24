@@ -1775,16 +1775,24 @@ function BGE:GetRowForPlateUnit(unit)
     local raceName = SafeUnitRace(unit)
     local want = self:GetLayoutRowCount()
 
-    -- Scoreboard rows already know the roster. Attach live nameplates to those rows first.
-    -- Race is used when available; otherwise take the first unbound same-class row
+    -- Scoreboard rows already know the roster. Only attach by class/race when
+    -- there is exactly one possible row. With multiple same-class enemies, the
+    -- old first-match fallback can overwrite the wrong seeded row identity.
     if classFile then
+        local candidate = nil
+        local candidateCount = 0
+ 
         for i = 1, want do
             local row = self.rows[i]
             if row and row._scoreboardSeen and not row.unit and row.classFile == classFile then
                 if not row.raceName or not raceName or row.raceName == raceName then
-                    return row
+                    candidate = row
+                    candidateCount = candidateCount + 1
                 end
             end
+        end
+        if candidateCount == 1 then
+            return candidate
         end
     end
 
@@ -2275,85 +2283,6 @@ function BGE:GetRowForExternalUnit(unit)
     if base and self.rowByBaseName[base] then return self.rowByBaseName[base] end
 
     return nil
-end
-
-function BGE:WarmupTargetOneMissingHealthRow()
-    if not GetSetting("bgeEnabled", true) then return end
-    if not IsInPVPInstance() then return end
-    if self:IsMatchStarted() then return end
-    local runMacroText = (_G.C_Macro and _G.C_Macro.RunMacroText) or _G.RunMacroText
-    if not runMacroText and not _G.TargetUnit then return end
-
-    local expected = tonumber(self:ResolveExpectedRows()) or 10
-
-    for i = 1, expected do
-        local row = self.rows and self.rows[i]
-        if row and row._seenIdentity and not row._hasLiveHP then
-			local targetAttempts = {
-				{ label = "tarBase", name = SafeNonEmptyString(row.name), macro = "/target " },
-				{ label = "tarDisplay", name = SafeNonEmptyString(row.displayName), macro = "/target " },
-				{ label = "tarFull", name = SafeNonEmptyString(row.fullName), macro = "/target " },
-			
-				{ label = "targetBase", name = SafeNonEmptyString(row.name), exact = false },
-				{ label = "targetDisplay", name = SafeNonEmptyString(row.displayName), exact = false },
-				{ label = "targetFull", name = SafeNonEmptyString(row.fullName), exact = false },
-			
-				{ label = "exactBase", name = SafeNonEmptyString(row.name), exact = true },
-				{ label = "exactDisplay", name = SafeNonEmptyString(row.displayName), exact = true },
-				{ label = "exactFull", name = SafeNonEmptyString(row.fullName), exact = true },
-			}
-
-            for n = 1, #targetAttempts do
-                local attempt = targetAttempts[n]
-                local targetName = attempt and attempt.name
-                if targetName then
-					local beforeFull, beforeBase = SafeUnitFullName("target")
-					local ok, err = false, nil
-					
-					if attempt.macro and runMacroText then
-						ok, err = pcall(runMacroText, attempt.macro .. targetName)
-					elseif _G.TargetUnit then
-						ok, err = pcall(_G.TargetUnit, targetName, attempt.exact)
-					else
-						err = "no target method"
-					end
-
-                    self:HandleExternalUnit("target")
-                    self:ScanNameplates()
-                    self:UpdateRowVisibilities()
-
-                    local afterFull, afterBase = SafeUnitFullName("target")
-                    local matched = false
-
-                    local targetRow = self:GetRowForExternalUnit("target")
-                    if targetRow and targetRow == row then
-                        matched = true
-                    end
-
-                    DPrint(
-                        "HP_TARGET_PROBE:" .. tostring(i) .. ":" .. tostring(n),
-                        "target probe row=" .. tostring(i)
-                        .. " mode=" .. DbgValue(attempt.label)
-                        .. " try=" .. DbgValue(targetName)
-						.. " macro=" .. DbgValue(attempt.macro)
-						.. " exact=" .. Bool01(attempt.exact)
-                        .. " ok=" .. Bool01(ok)
-                        .. " err=" .. DbgValue(err)
-                        .. " before=" .. DbgValue(beforeFull or beforeBase)
-                        .. " after=" .. DbgValue(afterFull or afterBase)
-                        .. " matched=" .. Bool01(matched)
-                        .. " liveHP=" .. Bool01(row._hasLiveHP)
-                    )
-
-                    if matched or row._hasLiveHP then
-                        return
-                    end
-                end
-            end
-
-            return
-        end
-    end
 end
 
 function BGE:HandleExternalUnit(unit)
@@ -3309,13 +3238,12 @@ evt:SetScript("OnEvent", function(_, event, arg1)
                     end
                 end
 
-                if have >= expected and specs >= specNeed and liveHP >= expected then return end
+                if have >= expected and specs >= specNeed then return end
 
                 attempts = attempts + 1
 
                 bge:UpdateMatchState()
                 bge:SeedRosterFromScoreboard()
-                bge:WarmupTargetOneMissingHealthRow()
                 bge:ScanNameplates()
                 bge:UpdateRowVisibilities()
 
@@ -3341,7 +3269,7 @@ evt:SetScript("OnEvent", function(_, event, arg1)
                     )
                 end
 
-                if (have < expected or specs < specNeed or liveHP < expected) and attempts < 60 then
+                if (have < expected or specs < specNeed) and attempts < 60 then
                     bge:RequestScoreboardData()
                     C_Timer.After(0.5, TryStartupScoreboard)
                 end
