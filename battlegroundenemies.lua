@@ -55,6 +55,7 @@ local ROW_ALPHA_UNKNOWN  = 0.35
 local CLASS_ALPHA_ACTIVE = 0.85
 local CLASS_ALPHA_OOR    = 0.55
 local CLASS_ALPHA_DEAD   = 0.50
+local CLICK_FOR_HP_TEXT  = "Click for HP"
 
 local GetSetting
 local SetSetting
@@ -1288,6 +1289,8 @@ local function MakeRow(parent, index)
     row._pwrSB = nil
     row._barsUnit = nil
     row._hasLiveHP = false
+    row._lastHPText = nil
+    row._dead = false
 
     row:HookScript("OnEnter", function()
         local bge = _G.RSTATS_BGE
@@ -1410,6 +1413,7 @@ function BGE:PrimeRosterSlots()
                     row._outOfRange = false
                     row._preview = false
                     row._hasLiveHP = false
+                    row._dead = false
                     row._lastHPText = nil
                     row.nameText:SetText("Enemy " .. tostring(i))
                     row.hpText:SetText("")
@@ -1651,7 +1655,7 @@ function BGE:ApplyScoreboardRosterRow(row, info, rowIndex, scoreIndex)
 		ApplyClassAlpha(row, CLASS_ALPHA_ACTIVE)
 	end
     if not row._hasLiveHP and not row._dead then
-        row.hpText:SetText("")
+        row.hpText:SetText(CLICK_FOR_HP_TEXT)
     end
 
     local hadIcon = row.achievIconTex
@@ -1839,6 +1843,7 @@ function BGE:ReleaseRow(row, keepSeen)
     row._placeholder = false
     row._outOfRange = false
     row._preview = false
+    row._dead = false
     row.unit = nil
     row.plateIndex = nil
     if not InLockdown() then
@@ -1974,6 +1979,10 @@ function BGE:UpdateIdentity(row, unit)
     row._preview = false
     row.bg:SetColorTexture(0, 0, 0, 0.35)
     ApplyClassAlpha(row, row._outOfRange and CLASS_ALPHA_OOR or CLASS_ALPHA_ACTIVE)
+
+    if not row._hasLiveHP and not row._dead and not row._preview then
+        row.hpText:SetText(CLICK_FOR_HP_TEXT)
+    end
 
     local targetName =
         SafeNonEmptyString(row.fullName)
@@ -2125,7 +2134,11 @@ function BGE:UpdateHealth(row, unit)
     elseif row._lastHPText then
         row.hpText:SetText(row._lastHPText)
     else
-        row.hpText:SetText("")
+        if row._seenIdentity and not row._dead and not row._preview then
+            row.hpText:SetText(CLICK_FOR_HP_TEXT)
+        else
+            row.hpText:SetText("")
+        end
     end
 
     local dbgPlate, dbgUF = SafePlateFrame(unit)
@@ -2457,7 +2470,9 @@ function BGE:HandlePlateRemoved(unit)
         if row._scoreboardSeen then
             row._seenIdentity = true
             row._placeholder = false
-            row.hpText:SetText("")
+            if not row._hasLiveHP and not row._dead then
+                row.hpText:SetText(CLICK_FOR_HP_TEXT)
+            end
             row.hp:SetMinMaxValues(0, 1)
             row.hp:SetValue(1)
             ApplyClassAlpha(row, self._oorEnabled and CLASS_ALPHA_OOR or CLASS_ALPHA_ACTIVE)
@@ -3229,14 +3244,6 @@ evt:SetScript("OnEvent", function(_, event, arg1)
                 local have = tonumber(bge._scoreboardEnemyCount) or 0
                 local specs = tonumber(bge._scoreboardSpecCount) or 0
                 local specNeed = math.min(have, expected)
-                local liveHP = 0
-
-                for i = 1, expected do
-                    local row = bge.rows and bge.rows[i]
-                    if row and row._hasLiveHP then
-                        liveHP = liveHP + 1
-                    end
-                end
 
                 if have >= expected and specs >= specNeed then return end
 
