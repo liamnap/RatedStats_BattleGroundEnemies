@@ -2510,7 +2510,7 @@ function BGE:UpdatePower(row, unit)
             return
         end
 
-        if row._hasLivePower and (IsNameplateUnit(unit) or unit == "target" or unit == "focus") then
+        if row._hasLivePower and not row._dead then
             DPrint(
                 "PWR_KEEP:" .. tostring(row.index or "?"),
                 "power keep row=" .. DbgValue(row.index)
@@ -2523,6 +2523,28 @@ function BGE:UpdatePower(row, unit)
             )
 
             row.power:Show()
+            return
+        end
+
+        if (powerToken or powerType ~= nil) and not row._dead then
+            row.power:SetMinMaxValues(0, 1)
+            row.power:SetValue(1)
+            row.power:SetStatusBarColor(r, g, b, 0.9)
+            row._hasPowerType = true
+            row._lastPowerUnit = unit
+            row.power:Show()
+
+            DPrint(
+                "PWR_TYPE:" .. tostring(row.index or "?"),
+                "power type row=" .. DbgValue(row.index)
+                .. " unit=" .. DbgValue(unit)
+                .. " sb=" .. DbgFrameName(sb)
+                .. " apiCur=" .. DbgValue(apiCur)
+                .. " apiMax=" .. DbgValue(apiMax)
+                .. " type=" .. DbgValue(powerType)
+                .. " token=" .. DbgValue(powerToken)
+            )
+
             return
         end
 
