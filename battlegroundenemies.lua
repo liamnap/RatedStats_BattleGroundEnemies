@@ -23,6 +23,10 @@ BGE.rowByDisplayName = {}
 BGE.rowByBaseName = {}
 BGE._scoreboardSeeded = false
 BGE._scoreboardEnemyCount = nil
+BGE._scoreboardFriendlyCount = nil
+BGE._scoreboardDuplicateCount = nil
+BGE._populateWarningPrinted = false
+BGE._populateWarningToken = 0
 BGE._scoreboardSort = nil
 BGE._scoreboardFaction = nil
 BGE._scoreboardReasserting = false
@@ -1806,6 +1810,10 @@ function BGE:SeedRosterFromScoreboard()
     if not GetSetting("bgeEnabled", true) then return end
     if not IsInPVPInstance() then return end
     if self:IsMatchStarted() then return end
+
+    self._scoreboardFriendlyCount = 0
+    self._scoreboardDuplicateCount = 0
+
     if not (_G.C_PvP and _G.C_PvP.GetScoreInfo and _G.GetNumBattlefieldScores) then return end
     if self._scoreboardReasserting then return end
 
@@ -1816,24 +1824,57 @@ function BGE:SeedRosterFromScoreboard()
     local enemyFaction = GetEnemyFactionIndex()
     if enemyFaction == nil then return end
 
+
     local okCount, count = pcall(_G.GetNumBattlefieldScores)
     count = okCount and tonumber(SafeToString(count)) or 0
     if count <= 0 then return end
 
     local enemies = {}
+    local friendlyCount = 0
+    local duplicateCount = 0
+    local enemyKeys = {}
+    local friendlyKeys = {}
+
     for i = 1, count do
         local okInfo, info = pcall(_G.C_PvP.GetScoreInfo, i)
         if okInfo and type(info) == "table" then
             local faction = NormalizeFactionIndex(info.faction)
 
 			if faction == enemyFaction and type(info.name) ~= "nil" then
+                local keyFull, keyBase = SafeNameKeysFromRaw(info.name)
+                local key = SafeNonEmptyString(info.guid) or keyFull or keyBase
+
+                if key then
+                    if enemyKeys[key] then
+                        duplicateCount = duplicateCount + 1
+                    else
+                        enemyKeys[key] = true
+                    end
+                end
+
 				enemies[#enemies + 1] = {
 					info = info,
 					scoreIndex = i,
 				}
+            elseif faction == friendlyFaction and type(info.name) ~= "nil" then
+                friendlyCount = friendlyCount + 1
+
+                local keyFull, keyBase = SafeNameKeysFromRaw(info.name)
+                local key = SafeNonEmptyString(info.guid) or keyFull or keyBase
+
+                if key then
+                    if friendlyKeys[key] then
+                        duplicateCount = duplicateCount + 1
+                    else
+                        friendlyKeys[key] = true
+                    end
+                end
 			end
         end
     end
+
+    self._scoreboardFriendlyCount = friendlyCount
+    self._scoreboardDuplicateCount = duplicateCount
 
     local enemyCount = #enemies
     if enemyCount <= 0 then return end
@@ -1876,6 +1917,63 @@ function BGE:SeedRosterFromScoreboard()
         .. "/" .. tostring(enemyCount)
     )
     self:UpdateRowVisibilities()
+end
+
+function BGE:CheckGatePopulateWarning()
+    if self._populateWarningPrinted then return end
+    if not GetSetting("bgeEnabled", true) then return end
+    if not IsInPVPInstance() then return end
+
+    local stillStartUp = false
+    if C_PvP and C_PvP.GetActiveMatchState and Enum and Enum.PvPMatchState then
+        local ok, state = pcall(C_PvP.GetActiveMatchState)
+        stillStartUp = ok and state == Enum.PvPMatchState.StartUp
+    end
+    if not stillStartUp then return end
+
+    self:UpdateMatchState()
+    self:SeedRosterFromScoreboard()
+    self:ScanNameplates()
+    self:UpdateRowVisibilities()
+
+    local expected = tonumber(self:ResolveExpectedRows()) or 10
+    local friendly = tonumber(self._scoreboardFriendlyCount) or 0
+
+    if friendly < expected then
+        self._populateWarningPrinted = true
+        print("|cffb69e86[Rated Stats]|r Could not populate as friendly team did not fill scoreboard.")
+        return
+    end
+
+    local have = tonumber(self._scoreboardEnemyCount) or 0
+    local duplicate = (tonumber(self._scoreboardDuplicateCount) or 0) > 0
+    local populated = 0
+    local seenKeys = {}
+
+    for i = 1, expected do
+        local row = self.rows and self.rows[i]
+        if row and row._seenIdentity then
+            populated = populated + 1
+
+            local key =
+                SafeNonEmptyString(row.guid)
+                or SafeNonEmptyString(row.displayName)
+                or SafeNonEmptyString(row.name)
+
+            if key then
+                if seenKeys[key] then
+                    duplicate = true
+                else
+                    seenKeys[key] = true
+                end
+            end
+        end
+    end
+
+    if duplicate or populated < expected or have < expected then
+        self._populateWarningPrinted = true
+        print("|cffb69e86[Rated Stats]|r Open scoreboard to populate players.")
+    end
 end
 
 function BGE:GetRowForPlateUnit(unit)
@@ -2051,6 +2149,10 @@ end
 function BGE:ClearAllRows()
     self._scoreboardSeeded = false
     self._scoreboardEnemyCount = nil
+    self._scoreboardFriendlyCount = nil
+    self._scoreboardDuplicateCount = nil
+    self._populateWarningPrinted = false
+    self._populateWarningToken = (self._populateWarningToken or 0) + 1
     self._debugPrintedSpecs = nil
     wipe(self.rowByUnit)
     wipe(self.rowByGuid)
@@ -2869,6 +2971,10 @@ function BGE:UpdateMatchState()
         self._matchStarted = false
         self._oorEnabled = false
         self._enteredBGAt = nil
+        self._scoreboardFriendlyCount = nil
+        self._scoreboardDuplicateCount = nil
+        self._populateWarningPrinted = false
+        self._populateWarningToken = (self._populateWarningToken or 0) + 1
         return
     end
 
@@ -3528,12 +3634,39 @@ evt:RegisterEvent("UNIT_DISPLAYPOWER")
 evt:RegisterEvent("PVP_MATCH_ACTIVE")
 evt:RegisterEvent("PVP_MATCH_COMPLETE")
 evt:RegisterEvent("UPDATE_BATTLEFIELD_SCORE")
+evt:RegisterEvent("START_TIMER")
 pcall(function() evt:RegisterEvent("UNIT_HEALTH_FREQUENT") end)
 pcall(function() evt:RegisterEvent("UNIT_POWER_FREQUENT") end)
 pcall(function() evt:RegisterEvent("UNIT_POWER_BAR_SHOW") end)
 pcall(function() evt:RegisterEvent("UNIT_POWER_BAR_HIDE") end)
 
-evt:SetScript("OnEvent", function(_, event, arg1)
+evt:SetScript("OnEvent", function(_, event, arg1, arg2, arg3)
+    if event == "START_TIMER" then
+        local pvpTimer = Enum and Enum.StartTimerType and Enum.StartTimerType.PvPBeginTimer or 0
+        pvpTimer = tonumber(SafeToString(pvpTimer)) or 0
+
+        local timerType = SafeNumber(arg1) or tonumber(SafeToString(arg1))
+        if timerType ~= pvpTimer then return end
+        if not IsInPVPInstance() then return end
+        if not C_Timer or not C_Timer.After then return end
+
+        local remaining = SafeNumber(arg2) or tonumber(SafeToString(arg2))
+        if not remaining then return end
+
+        BGE._populateWarningToken = (BGE._populateWarningToken or 0) + 1
+        local token = BGE._populateWarningToken
+        local delay = remaining - 1
+        if delay < 0 then delay = 0 end
+
+        C_Timer.After(delay, function()
+            local bge = _G.RSTATS_BGE
+            if bge and bge._populateWarningToken == token then
+                bge:CheckGatePopulateWarning()
+            end
+        end)
+        return
+    end
+
     if event == "PLAYER_LOGIN" then
         if IsInPVPInstance() or GetSetting("bgePreview", false) then
             CreateMainFrame()
@@ -3562,6 +3695,10 @@ evt:SetScript("OnEvent", function(_, event, arg1)
 
             BGE._scoreboardSeeded = false
             BGE._scoreboardEnemyCount = nil
+            BGE._scoreboardFriendlyCount = nil
+            BGE._scoreboardDuplicateCount = nil
+            BGE._populateWarningPrinted = false
+            BGE._populateWarningToken = (BGE._populateWarningToken or 0) + 1
             BGE._scoreboardRoleCount = nil
             BGE._scoreboardSpecCount = nil
             BGE:RequestScoreboardData()
@@ -3595,7 +3732,7 @@ evt:SetScript("OnEvent", function(_, event, arg1)
                 have = tonumber(bge._scoreboardEnemyCount) or 0
                 local specs = tonumber(bge._scoreboardSpecCount) or 0
                 specNeed = math.min(have, expected)
-                liveHP = 0
+                local liveHP = 0
 
                 for i = 1, expected do
                     local row = bge.rows and bge.rows[i]
