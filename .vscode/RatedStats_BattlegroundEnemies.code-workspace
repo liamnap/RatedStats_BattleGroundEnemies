@@ -74,7 +74,9 @@
 			"PowerBarColor",
 			"RAID_CLASS_COLORS",
 			"GetUnitName",
-			"GetCVarBool"
+			"LOCALIZED_CLASS_NAMES_MALE",
+			"LOCALIZED_CLASS_NAMES_FEMALE",
+			"TANK"
 		],
 		"Lua.type.weakUnionCheck": true
 	}
