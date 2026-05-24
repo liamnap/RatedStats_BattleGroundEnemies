@@ -2229,38 +2229,6 @@ function BGE:UpdateHealth(row, unit)
         end
     end
 
-    local dbgPlate, dbgUF = SafePlateFrame(unit)
-    local dbgHBC = SafeFrameField(dbgUF, "HealthBarsContainer")
-    local dbgHB = SafeFrameField(dbgHBC, "healthBar")
-
-    DPrint(
-        "HP_UPDATE:" .. tostring(row.index or "?"),
-        "hp update row=" .. DbgValue(row.index)
-        .. " unit=" .. DbgValue(unit)
-        .. " name=" .. DbgValue(row.displayName or row.name)
-        .. " liveHP=" .. Bool01(row._hasLiveHP)
-        .. " txt=" .. DbgValue(txt)
-        .. " cur=" .. DbgValue(cur)
-        .. " max=" .. DbgValue(maxv)
-        .. " pct=" .. DbgValue(pct)
-        .. " copiedBar=" .. Bool01(copiedBar)
-        .. " sb=" .. DbgFrameName(sb)
-        .. " plate=" .. DbgFrameName(dbgPlate)
-        .. " uf=" .. DbgFrameName(dbgUF)
-        .. " hbc=" .. DbgFrameName(dbgHBC)
-        .. " hb=" .. DbgFrameName(dbgHB)
-    )
-
-    if GetSetting("bgeDebug", false) and type(txt) ~= "nil" then
-        local key = "HP_RAW_TEXT:" .. tostring(row.index or "?")
-        local now = GetTime()
-        local last = BGE._dbgLast[key] or 0
-        if (now - last) >= 1.0 then
-            BGE._dbgLast[key] = now
-            pcall(print, "|cffb69e86[RSTATS-BGE]|r hp raw text row=", row.index, "unit=", unit, "name=", row.displayName or row.name, "txt=", txt)
-        end
-    end
-
     UpdateNameClipToHPFill(row)
 end
 
