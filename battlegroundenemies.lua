@@ -552,6 +552,36 @@ local function FindPlateHealthStatusBar(unit)
 end
 
 local function FindPlatePowerStatusBar(unit)
+    if unit == "target" then
+        local targetContent = SafeFrameField(_G.TargetFrame, "TargetFrameContent")
+        local targetMain = SafeFrameField(targetContent, "TargetFrameContentMain")
+
+        local candidates = {
+            SafeFrameField(targetMain, "ManaBar"),
+            SafeFrameField(_G.TargetFrame, "ManaBar"),
+            _G.TargetFrameManaBar,
+        }
+
+        for i = 1, #candidates do
+            local sb = candidates[i]
+            if IsStatusBarFrame(sb) then return sb end
+        end
+    elseif unit == "focus" then
+        local focusContent = SafeFrameField(_G.FocusFrame, "TargetFrameContent")
+        local focusMain = SafeFrameField(focusContent, "TargetFrameContentMain")
+
+        local candidates = {
+            SafeFrameField(focusMain, "ManaBar"),
+            SafeFrameField(_G.FocusFrame, "ManaBar"),
+            _G.FocusFrameManaBar,
+        }
+
+        for i = 1, #candidates do
+            local sb = candidates[i]
+            if IsStatusBarFrame(sb) then return sb end
+        end
+    end
+
     local _, uf = SafePlateFrame(unit)
     if not uf then return nil end
 
@@ -2319,7 +2349,15 @@ end
 
 function BGE:UpdatePower(row, unit)
     if not row then return end
-    if not GetSetting("bgeShowPower", true) then
+
+    local showPower = GetSetting("bgeShowPower", true)
+    if not showPower then
+        DPrint(
+            "PWR_DISABLED:" .. tostring(row.index or "?"),
+            "power disabled row=" .. DbgValue(row.index)
+            .. " unit=" .. DbgValue(unit or row.unit)
+            .. " bgeShowPower=false"
+        )
         row.power:Hide()
         return
     end
@@ -2346,6 +2384,41 @@ function BGE:UpdatePower(row, unit)
     local fallbackR, fallbackG, fallbackB = ColorFromStatusBar(sb, 0, 0.55, 1)
     local apiCur, apiMax, r, g, b, powerType, powerToken = SafeUnitPowerValues(unit, fallbackR, fallbackG, fallbackB)
 
+    local copiedBar = false
+    if sb and sb.GetValue and sb.GetMinMaxValues then
+        local okValue, rawValue = pcall(sb.GetValue, sb)
+        local okRange, rawMin, rawMax = pcall(sb.GetMinMaxValues, sb)
+
+        if okValue and okRange
+            and type(rawValue) == "number"
+            and type(rawMin) == "number"
+            and type(rawMax) == "number"
+        then
+            local okSetRange = pcall(row.power.SetMinMaxValues, row.power, rawMin, rawMax)
+            local okSetValue = pcall(row.power.SetValue, row.power, rawValue)
+            copiedBar = okSetRange and okSetValue
+        end
+    end
+
+    if copiedBar then
+        row.power:SetStatusBarColor(r, g, b, 0.9)
+        row.power:Show()
+
+        DPrint(
+            "PWR_SHOW:" .. tostring(row.index or "?"),
+            "power show row=" .. DbgValue(row.index)
+            .. " unit=" .. DbgValue(unit)
+            .. " copiedBar=1"
+            .. " sb=" .. DbgFrameName(sb)
+            .. " type=" .. DbgValue(powerType)
+            .. " token=" .. DbgValue(powerToken)
+        )
+
+        return
+    end
+
+    local cur, maxv = SafeStatusBarValues(sb)
+
     if not cur or not maxv then
         cur, maxv = apiCur, apiMax
     end
@@ -2359,6 +2432,17 @@ function BGE:UpdatePower(row, unit)
             row.power:Show()
             return
         end
+
+        DPrint(
+            "PWR_HIDE:" .. tostring(row.index or "?"),
+            "power hide row=" .. DbgValue(row.index)
+            .. " unit=" .. DbgValue(unit)
+            .. " sb=" .. DbgFrameName(sb)
+            .. " apiCur=" .. DbgValue(apiCur)
+            .. " apiMax=" .. DbgValue(apiMax)
+            .. " type=" .. DbgValue(powerType)
+            .. " token=" .. DbgValue(powerToken)
+        )
 
         row.power:Hide()
 
