@@ -371,6 +371,39 @@ local function SafeUnitRace(unit)
     return SafeNonEmptyString(localized), SafeNonEmptyString(raceFile)
 end
 
+local function SafeUnitGender(unit)
+    if not unit then return nil end
+
+    if _G.UnitSexBase then
+        local ok, sex = pcall(_G.UnitSexBase, unit)
+        sex = ok and SafeNumber(sex) or nil
+        if sex and sex > 0 then return sex end
+    end
+
+    if _G.UnitSex then
+        local ok, sex = pcall(_G.UnitSex, unit)
+        sex = ok and SafeNumber(sex) or nil
+        if sex and sex > 0 then return sex end
+    end
+
+    return nil
+end
+
+local function SafeUnitHonorLevel(unit)
+    if not unit or not _G.UnitHonorLevel then return nil end
+    local ok, honorLevel = pcall(_G.UnitHonorLevel, unit)
+    honorLevel = ok and SafeNumber(honorLevel) or nil
+    if honorLevel and honorLevel > 0 then return honorLevel end
+    return nil
+end
+
+local function SafeUnitGuildName(unit)
+    if not unit or not _G.GetGuildInfo then return nil end
+    local ok, guildName = pcall(_G.GetGuildInfo, unit)
+    if not ok then return nil end
+    return SafeNonEmptyString(guildName)
+end
+
 local function NormalizeFactionIndex(v)
     local s = SafeToString(v)
     if type(s) ~= "string" then return nil end
@@ -1558,6 +1591,15 @@ function BGE:ApplyScoreboardRosterRow(row, info, rowIndex, scoreIndex)
     local guid = SafeNonEmptyString(info.guid)
     local classToken = SafeNonEmptyString(info.classToken)
     local raceName = SafeNonEmptyString(info.raceName)
+    local honorLevel = SafeNumber(info.honorLevel)
+    if honorLevel and honorLevel <= 0 then honorLevel = nil end
+
+    local gender = nil
+    if guid and _G.GetPlayerInfoByGUID then
+        local okPlayerInfo, _, _, _, _, sex = pcall(_G.GetPlayerInfoByGUID, guid)
+        gender = okPlayerInfo and SafeNumber(sex) or nil
+        if gender and gender <= 0 then gender = nil end
+    end
 
     local specDisplay = nil
     local specName = nil
@@ -1641,6 +1683,8 @@ function BGE:ApplyScoreboardRosterRow(row, info, rowIndex, scoreIndex)
     if type(displayText) ~= "nil" then row.displayText = displayText end
     if classToken then row.classFile = classToken end
     if raceName then row.raceName = raceName end
+    if honorLevel then row.honorLevel = honorLevel end
+    if gender then row.gender = gender end
     if role or not sameIdentity then
         row.role = role
     end
@@ -1656,6 +1700,9 @@ function BGE:ApplyScoreboardRosterRow(row, info, rowIndex, scoreIndex)
             .. " name=" .. DbgValue(keyFull or keyBase or rawName)
             .. " spec=" .. DbgValue(specDisplay)
             .. " class=" .. DbgValue(classToken)
+            .. " race=" .. DbgValue(raceName)
+            .. " gender=" .. DbgValue(gender)
+            .. " honor=" .. DbgValue(honorLevel)
             .. " liveHP=" .. Bool01(row._hasLiveHP)
             .. " unit=" .. DbgValue(row.unit)
         )
@@ -1848,26 +1895,68 @@ function BGE:GetRowForPlateUnit(unit)
 
     local _, classFile = SafeUnitClass(unit)
     local raceName = SafeUnitRace(unit)
+    local unitGender = SafeUnitGender(unit)
+    local unitHonorLevel = SafeUnitHonorLevel(unit)
+    local unitGuildName = SafeUnitGuildName(unit)
     local want = self:GetLayoutRowCount()
 
-    -- Scoreboard rows already know the roster. Only attach by class/race when
-    -- there is exactly one possible row. With multiple same-class enemies, the
-    -- old first-match fallback can overwrite the wrong seeded row identity.
+    -- Scoreboard rows already know the roster. Match by increasingly specific
+    -- fingerprints and only bind when a tier gives exactly one row.
     if classFile then
-        local candidate = nil
-        local candidateCount = 0
- 
-        for i = 1, want do
-            local row = self.rows[i]
-            if row and row._scoreboardSeen and not row.unit and row.classFile == classFile then
-                if not row.raceName or not raceName or row.raceName == raceName then
+        local function BaseCandidate(row)
+            if not row or not row._scoreboardSeen or row.unit then return false end
+            if row.classFile ~= classFile then return false end
+            if row.raceName and raceName and row.raceName ~= raceName then return false end
+            return true
+        end
+
+        local function UniqueCandidate(extraCheck)
+            local candidate = nil
+            local count = 0
+
+            for i = 1, want do
+                local row = self.rows[i]
+                if BaseCandidate(row) and (not extraCheck or extraCheck(row)) then
                     candidate = row
-                    candidateCount = candidateCount + 1
+                    count = count + 1
+                    if count > 1 then
+                        return nil, count
+                    end
                 end
             end
+
+            return candidate, count
         end
-        if candidateCount == 1 then
-            return candidate
+
+        local candidate, candidateCount = UniqueCandidate()
+        if candidateCount == 1 then return candidate end
+
+        if candidateCount > 1 and unitGender then
+            candidate, candidateCount = UniqueCandidate(function(row)
+                return row.gender and row.gender == unitGender
+            end)
+            if candidateCount == 1 then return candidate end
+        end
+
+        if candidateCount > 1 and unitHonorLevel then
+            candidate, candidateCount = UniqueCandidate(function(row)
+                return row.honorLevel and row.honorLevel == unitHonorLevel
+            end)
+            if candidateCount == 1 then return candidate end
+        end
+
+        if candidateCount > 1 and unitGuildName then
+            candidate, candidateCount = UniqueCandidate(function(row)
+                return row.guildName and row.guildName == unitGuildName
+            end)
+            if candidateCount == 1 then return candidate end
+        end
+
+        -- There are matching scoreboard rows, but no safe unique fingerprint.
+        -- Do not fall through to empty-row fallback; that is how same race/class
+        -- enemies get rebound to the wrong frame.
+        if candidateCount > 0 then
+            return nil
         end
     end
 
@@ -1902,6 +1991,9 @@ function BGE:ReleaseRow(row, keepSeen)
     row.displayText = nil
     row.raceName = nil
     row.classFile = nil
+    row.gender = nil
+    row.honorLevel = nil
+    row.guildName = nil
     row.role = nil
     row.specID = nil
     row.specName = nil
@@ -1997,6 +2089,9 @@ function BGE:UpdateIdentity(row, unit)
     local displayText, keyFull, keyBase = GetNameplateDisplayNames(unit)
     local full, unitBase = SafeUnitFullName(unit)
     local _, classFile = SafeUnitClass(unit)
+    local gender = SafeUnitGender(unit)
+    local honorLevel = SafeUnitHonorLevel(unit)
+    local guildName = SafeUnitGuildName(unit)
 
     keyFull = keyFull or full
     keyBase = keyBase or unitBase
@@ -2020,6 +2115,9 @@ function BGE:UpdateIdentity(row, unit)
     if keyBase then row.name = keyBase end
     if type(displayText) ~= "nil" then row.displayText = displayText end
     if classFile then row.classFile = classFile end
+    if gender then row.gender = gender end
+    if honorLevel then row.honorLevel = honorLevel end
+    if guildName then row.guildName = guildName end
 
     local role, specName = ScoreboardRoleForUnit(unit)
     if role then row.role = role end
