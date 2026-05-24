@@ -2176,48 +2176,87 @@ function BGE:UpdateHealth(row, unit)
     UpdateNameClipToHPFill(row)
 end
 
-local function SafeUnitPowerPercent(unit)
-    if not unit or not _G.UnitPowerPercent then return nil, 0, 0.55, 1, nil, nil end
+local function SafeUnitPowerValues(unit, fallbackR, fallbackG, fallbackB)
+    if not unit then return nil, nil, fallbackR or 0, fallbackG or 0.55, fallbackB or 1, nil, nil end
 
     local powerType, powerToken = nil, nil
+    local altR, altG, altB = nil, nil, nil
     if _G.UnitPowerType then
-        local okType, pType, pToken = pcall(_G.UnitPowerType, unit)
-        powerType = okType and SafeNumber(pType) or nil
-        powerToken = okType and SafeNonEmptyString(pToken) or nil
+        local okType, pType, pToken, pAltR, pAltG, pAltB = pcall(_G.UnitPowerType, unit)
+        if okType then
+            powerType = SafeNumber(pType)
+            powerToken = SafeNonEmptyString(pToken)
+            altR = SafeNumber(pAltR)
+            altG = SafeNumber(pAltG)
+            altB = SafeNumber(pAltB)
+        end
     end
 
-    local r, g, b = 0, 0.55, 1
+    -- Match Blizzard's old unit-frame power colouring: UnitPowerType token first,
+    -- alternate RGB second, then mana/default. Do not hard-code resource colours.
+    local r, g, b = fallbackR or 0, fallbackG or 0.55, fallbackB or 1
     if _G.PowerBarColor then
         local info = (powerToken and _G.PowerBarColor[powerToken]) or (powerType and _G.PowerBarColor[powerType])
         if info then
             r = SafeNumber(info.r) or r
             g = SafeNumber(info.g) or g
             b = SafeNumber(info.b) or b
+        elseif altR and altG and altB then
+            r, g, b = altR, altG, altB
+        elseif _G.PowerBarColor["MANA"] then
+            local mana = _G.PowerBarColor["MANA"]
+            r = SafeNumber(mana.r) or r
+            g = SafeNumber(mana.g) or g
+            b = SafeNumber(mana.b) or b
+        end
+    elseif altR and altG and altB then
+        r, g, b = altR, altG, altB
+    end
+
+    local cur, maxv = nil, nil
+    if _G.UnitPower and _G.UnitPowerMax then
+        local okCur, rawCur
+        local okMax, rawMax
+
+        if powerType ~= nil then
+            okCur, rawCur = pcall(_G.UnitPower, unit, powerType, false)
+            okMax, rawMax = pcall(_G.UnitPowerMax, unit, powerType, false)
+        else
+            okCur, rawCur = pcall(_G.UnitPower, unit)
+            okMax, rawMax = pcall(_G.UnitPowerMax, unit)
+        end
+
+        cur = okCur and SafeNumber(rawCur) or nil
+        maxv = okMax and SafeNumber(rawMax) or nil
+
+        if cur and maxv and maxv > 0 then
+            if cur < 0 then cur = 0 end
+            if cur > maxv then cur = maxv end
+            return cur, maxv, r, g, b, powerType, powerToken
         end
     end
 
-    local okPct, pct
-    if powerType ~= nil then
-        okPct, pct = pcall(_G.UnitPowerPercent, unit, powerType, false)
-    else
-        okPct, pct = pcall(_G.UnitPowerPercent, unit)
+    if _G.UnitPowerPercent then
+        local okPct, pct
+        if powerType ~= nil then
+            okPct, pct = pcall(_G.UnitPowerPercent, unit, powerType, false)
+        else
+            okPct, pct = pcall(_G.UnitPowerPercent, unit)
+        end
+
+        pct = okPct and SafeNumber(pct) or nil
+        if pct then
+            if pct <= 1 then pct = pct * 100 end
+            if pct < 0 then
+                pct = 0
+            elseif pct > 100 then
+                pct = 100
+            end
+            return pct, 100, r, g, b, powerType, powerToken
+        end
     end
 
-    pct = okPct and SafeNumber(pct) or nil
-    if not pct then return nil, r, g, b, powerType, powerToken end
-
-    -- Guard both possible styles: 0..1 fraction or 0..100 percentage.
-    if pct <= 1 then
-        pct = pct * 100
-    end
-
-    if pct < 0 then
-        pct = 0
-    elseif pct > 100 then
-        pct = 100
-    end
-
-    return pct, r, g, b, powerType, powerToken
+    return nil, nil, r, g, b, powerType, powerToken
 end
 
 function BGE:UpdatePower(row, unit)
@@ -2246,15 +2285,11 @@ function BGE:UpdatePower(row, unit)
     end
 
     local cur, maxv = SafeStatusBarValues(sb)
-    local r, g, b = ColorFromStatusBar(sb, 0, 0.55, 1)
-    local pctFromAPI, powerType, powerToken = nil, nil, nil
+    local fallbackR, fallbackG, fallbackB = ColorFromStatusBar(sb, 0, 0.55, 1)
+    local apiCur, apiMax, r, g, b, powerType, powerToken = SafeUnitPowerValues(unit, fallbackR, fallbackG, fallbackB)
 
     if not cur or not maxv then
-        pctFromAPI, r, g, b, powerType, powerToken = SafeUnitPowerPercent(unit)
-        if pctFromAPI then
-            cur = pctFromAPI
-            maxv = 100
-        end
+        cur, maxv = apiCur, apiMax
     end
 
     if not cur or not maxv or maxv <= 0 then
@@ -3194,6 +3229,8 @@ evt:RegisterEvent("PVP_MATCH_COMPLETE")
 evt:RegisterEvent("UPDATE_BATTLEFIELD_SCORE")
 pcall(function() evt:RegisterEvent("UNIT_HEALTH_FREQUENT") end)
 pcall(function() evt:RegisterEvent("UNIT_POWER_FREQUENT") end)
+pcall(function() evt:RegisterEvent("UNIT_POWER_BAR_SHOW") end)
+pcall(function() evt:RegisterEvent("UNIT_POWER_BAR_HIDE") end)
 
 evt:SetScript("OnEvent", function(_, event, arg1)
     if event == "PLAYER_LOGIN" then
@@ -3421,7 +3458,13 @@ evt:SetScript("OnEvent", function(_, event, arg1)
         return
     end
 
-    if event == "UNIT_POWER_UPDATE" or event == "UNIT_POWER_FREQUENT" or event == "UNIT_MAXPOWER" or event == "UNIT_DISPLAYPOWER" then
+    if event == "UNIT_POWER_UPDATE"
+        or event == "UNIT_POWER_FREQUENT"
+        or event == "UNIT_MAXPOWER"
+        or event == "UNIT_DISPLAYPOWER"
+        or event == "UNIT_POWER_BAR_SHOW"
+        or event == "UNIT_POWER_BAR_HIDE"
+    then
         BGE:HandleUnitUpdate(arg1, "PWR")
         return
     end
