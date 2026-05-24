@@ -1167,9 +1167,29 @@ local function MakeRow(parent, index)
     row._secureName = nil
     row._targetBindingsDirty = false
 
-    row:SetScript("PostClick", function(self)
+    row:SetScript("PostClick", function(self, button)
         local bge = _G.RSTATS_BGE
-        if bge then bge:SetSelectedRow(self) end
+        if not bge then return end
+
+        bge:SetSelectedRow(self)
+
+        local unit = (button == "RightButton") and "focus" or "target"
+        if unit == "focus" then
+            bge._pendingFocusRow = self
+        else
+            bge._pendingTargetRow = self
+        end
+
+        if C_Timer and C_Timer.After then
+            C_Timer.After(0, function()
+                local later = _G.RSTATS_BGE
+                if later then
+                    later:HandleExternalUnit(unit, self)
+                end
+            end)
+        else
+            bge:HandleExternalUnit(unit, self)
+        end
     end)
 
     row.bg = row:CreateTexture(nil, "BACKGROUND")
@@ -1347,6 +1367,9 @@ function BGE:SyncSelectedRowToTarget()
 
     local full, base = SafeUnitFullName("target")
     local hit = (full and self.rowByDisplayName[full]) or (base and self.rowByBaseName[base])
+    if not hit and self._liveTargetRow and SafeUnitIsEnemyPlayer("target") then
+        hit = self._liveTargetRow
+    end
     self:SetSelectedRow(hit)
 end
 
@@ -2333,13 +2356,35 @@ function BGE:GetRowForExternalUnit(unit)
     return nil
 end
 
-function BGE:HandleExternalUnit(unit)
+function BGE:HandleExternalUnit(unit, clickedRow)
     if not GetSetting("bgeEnabled", true) then return end
     if not IsInPVPInstance() then return end
     if not SafeUnitExists(unit) or not SafeUnitIsEnemyPlayer(unit) then return end
 
     local row = self:GetRowForExternalUnit(unit)
+
+    if not row and (unit == "target" or unit == "focus") then
+        local pending = clickedRow
+        if not pending and unit == "target" then pending = self._pendingTargetRow end
+        if not pending and unit == "focus" then pending = self._pendingFocusRow end
+
+        if pending and pending._seenIdentity and not pending._preview then
+            row = pending
+        end
+    end
+
+    if not row and unit == "target" then row = self._liveTargetRow end
+    if not row and unit == "focus" then row = self._liveFocusRow end
+
     if not row then return end
+
+    if unit == "target" then
+        self._liveTargetRow = row
+        self._pendingTargetRow = nil
+    elseif unit == "focus" then
+        self._liveFocusRow = row
+        self._pendingFocusRow = nil
+    end
 
     self:UpdateIdentity(row, unit)
     self:UpdateHealth(row, unit)
@@ -3410,13 +3455,17 @@ evt:SetScript("OnEvent", function(_, event, arg1)
     end
 
     if event == "PLAYER_TARGET_CHANGED" then
-        BGE:HandleExternalUnit("target")
+        BGE._liveTargetRow = nil
+        BGE:HandleExternalUnit("target", BGE._pendingTargetRow)
+        BGE._pendingTargetRow = nil
         BGE:SyncSelectedRowToTarget()
         return
     end
 
     if event == "PLAYER_FOCUS_CHANGED" then
-        BGE:HandleExternalUnit("focus")
+        BGE._liveFocusRow = nil
+        BGE:HandleExternalUnit("focus", BGE._pendingFocusRow)
+        BGE._pendingFocusRow = nil
         return
     end
 
