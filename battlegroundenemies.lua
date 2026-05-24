@@ -2357,11 +2357,17 @@ function BGE:UpdatePower(row, unit)
         local okValue, rawValue = pcall(sb.GetValue, sb)
         local okRange, rawMin, rawMax = pcall(sb.GetMinMaxValues, sb)
 
-        if okValue and okRange
-            and type(rawValue) == "number"
-            and type(rawMin) == "number"
-            and type(rawMax) == "number"
-        then
+        rawValue = okValue and SafeNumber(rawValue) or nil
+        rawMin = okRange and SafeNumber(rawMin) or nil
+        rawMax = okRange and SafeNumber(rawMax) or nil
+
+        if rawValue and rawMin and rawMax and rawMax > rawMin then
+            if rawValue < rawMin then
+                rawValue = rawMin
+            elseif rawValue > rawMax then
+                rawValue = rawMax
+            end
+
             local okSetRange = pcall(row.power.SetMinMaxValues, row.power, rawMin, rawMax)
             local okSetValue = pcall(row.power.SetValue, row.power, rawValue)
             copiedBar = okSetRange and okSetValue
@@ -2369,6 +2375,8 @@ function BGE:UpdatePower(row, unit)
     end
 
     if copiedBar then
+        row._hasLivePower = true
+        row._lastPowerUnit = unit
         row.power:SetStatusBarColor(r, g, b, 0.9)
         row.power:Show()
 
@@ -2384,8 +2392,6 @@ function BGE:UpdatePower(row, unit)
 
         return
     end
-
-    local cur, maxv = SafeStatusBarValues(sb)
 
     if not cur or not maxv then
         cur, maxv = apiCur, apiMax
