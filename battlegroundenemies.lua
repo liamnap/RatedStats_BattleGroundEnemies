@@ -597,6 +597,7 @@ local function FindPlatePowerStatusBar(unit)
             _G.TargetFrameManaBar,
             FindStatusBar(targetMain, targetHealthBarsContainer),
             FindStatusBar(targetContent, targetHealthBarsContainer),
+            FindStatusBar(_G.TargetFrame, targetHealthBarsContainer),
         }
 
         for i = 1, #candidates do
@@ -614,6 +615,7 @@ local function FindPlatePowerStatusBar(unit)
             _G.FocusFrameManaBar,
             FindStatusBar(focusMain, focusHealthBarsContainer),
             FindStatusBar(focusContent, focusHealthBarsContainer),
+            FindStatusBar(_G.FocusFrame, focusHealthBarsContainer),
         }
 
         for i = 1, #candidates do
@@ -2462,17 +2464,11 @@ function BGE:UpdatePower(row, unit)
         local okValue, rawValue = pcall(sb.GetValue, sb)
         local okRange, rawMin, rawMax = pcall(sb.GetMinMaxValues, sb)
 
-        rawValue = okValue and SafeNumber(rawValue) or nil
-        rawMin = okRange and SafeNumber(rawMin) or nil
-        rawMax = okRange and SafeNumber(rawMax) or nil
-
-        if rawValue and rawMin and rawMax and rawMax > rawMin then
-            if rawValue < rawMin then
-                rawValue = rawMin
-            elseif rawValue > rawMax then
-                rawValue = rawMax
-            end
-
+        if okValue and okRange
+            and type(rawValue) == "number"
+            and type(rawMin) == "number"
+            and type(rawMax) == "number"
+        then
             local okSetRange = pcall(row.power.SetMinMaxValues, row.power, rawMin, rawMax)
             local okSetValue = pcall(row.power.SetValue, row.power, rawValue)
             copiedBar = okSetRange and okSetValue
