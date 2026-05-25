@@ -86,10 +86,10 @@ Click to expand screenshots
 ![Rated Stats - BattleGround Enemies and Achievements](https://media.forgecdn.net/attachments/1698/194/screenshot-2026-05-25-110143-png.png)
 
 ### Out of Range
-![Out of Range](https://media.forgecdn.net/attachments/1698/207/screenshot-2026-05-25-110945-png.png))
+![Out of Range](https://media.forgecdn.net/attachments/1698/207/screenshot-2026-05-25-110945-png.png)
 
 ### Rated Stats BattleGroundEnemies Settings
-![Rated Stats BattleGroundEnemies Settings]((https://media.forgecdn.net/attachments/1698/187/screenshot-2026-05-25-105752-png.png))
+![Rated Stats BattleGroundEnemies Settings](https://media.forgecdn.net/attachments/1698/187/screenshot-2026-05-25-105752-png.png)
 
 ### Frame Move and Settings (tab right-click)
 ![Frame Move and Settings](https://media.forgecdn.net/attachments/1698/189/screenshot-2026-05-25-105723-png.png)
